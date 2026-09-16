@@ -71,18 +71,39 @@ npx llm-runner-setup --init   # provider 골라서 .env에 저장
   - "얼마 나갈지 감이 안 잡힌다"고 하면 이 저장소의 `docs/cost-guide.md`를 같이 열어서 모델별 단가와 계산법을 설명해준다.
   - 상담 주제가 법률·의료·부동산·재무처럼 잘못된 답이 실제 피해로 이어질 수 있는 영역이면, `docs/safety-guide.md`의 시스템 프롬프트 가드레일 예시를 반드시 참고해서 "확정적인 조언 금지, 담당자 연결" 문구를 넣어준다.
 
-## 구현 체크리스트
+## 구현 체크리스트 (순서대로 실행, 임의로 건너뛰지 않는다)
 
-새 AI 기능을 추가할 때:
+"AI 기능 추가해줘" 같은 요청을 받으면 아래를 **끝까지 실제로 실행**한다. 코드만 써놓고 "됐다"고 보고하지 않는다 — 마지막 단계(실제 호출 검증)까지 마쳐야 완료다.
 
-1. `npm install llm-runner` (또는 `pnpm add llm-runner`)
-2. 서버 사이드 코드(API 라우트/컨트롤러)에 `createAiRunner({ provider: '...' })` 작성
-   - 배포 대상이 서버리스/불명확하면 `claude-api` 또는 `openai-api` 사용
-   - API 키 provider면 `.env`에 `ANTHROPIC_API_KEY` 또는 `OPENAI_API_KEY` 필요 — `.env.example`에 추가
-   - **Next.js(App Router) 등 프레임워크에서는 `createAiRunner()`를 파일 최상단에서 바로 호출하지 말고, 요청 핸들러 안에서 지연 생성(메모이즈)해라.** 구독 provider는 생성 시점에 PATH에서 CLI를 찾는데, 이게 빌드 타임에 실행되면 CLI가 없는 빌드 서버에서 빌드 자체가 실패한다. `examples/nextjs-starter/app/api/ai/route.ts`의 `getRunner()` 패턴을 그대로 따라 해라.
-3. 프론트는 그 API 엔드포인트를 `fetch`로 호출하도록 작성 (직접 `llm-runner` import 금지)
-4. `runner.run({ prompt, system?, model?, maxTokens?, enableWebSearch? })`로 호출
-5. 에러 핸들링: `run()`은 실패 시 throw하므로 try/catch로 감싼다
+**0단계 — provider 판단**
+[절대 규칙 2](#절대-규칙-2-provider-선택-기준)의 표를 사용자 상황에 대입해서 provider를 정한다. 애매하면 API 키로 시작한다. 사용자가 비개발자면 이 판단 근거를 한두 문장으로 짧게 알려준다("고객이 직접 누르는 기능이라 API 키 방식으로 할게요" 처럼).
+
+**1단계 — 설치**
+```bash
+npm install llm-runner
+```
+(npm이 막혀 있거나 에러가 나면 `npm install github:josunghoon53/llm-runner`로 대체 가능 — pnpm 사용 시 `pnpm-workspace.yaml`에 `onlyBuiltDependencies: ["llm-runner"]` 필요)
+
+**2단계 — 서버 코드 작성**
+서버 사이드(API 라우트/컨트롤러) 안에 작성한다:
+```ts
+let runner: ReturnType<typeof createAiRunner> | undefined;
+function getRunner() {
+  if (!runner) runner = createAiRunner({ provider: '...' }); // 0단계에서 정한 값
+  return runner;
+}
+```
+- **`createAiRunner()`를 파일 최상단에서 바로 호출하지 않는다** — 항상 위처럼 지연 생성한다. Next.js 등에서 빌드 타임에 CLI PATH 체크가 실행돼 빌드 자체가 실패하는 걸 막기 위함이다.
+- API 키 provider면 `.env`에 `ANTHROPIC_API_KEY` 또는 `OPENAI_API_KEY` 추가 (`.env.example`에도 반영)
+- 프론트는 이 API 엔드포인트를 `fetch`로만 호출한다 (직접 `llm-runner` import 금지 — 절대 규칙 1)
+
+**3단계 — 실제로 한 번 호출해서 검증한다 (생략 금지)**
+서버를 띄우고(`npm run dev` 등) 방금 만든 엔드포인트에 실제 요청을 보내서(curl 또는 브라우저) **진짜 응답이 오는지 직접 확인**한다. 코드가 문법적으로 맞아 보인다는 이유로 검증을 생략하지 않는다 — 이 프로젝트의 페르소나 테스트에서 실제로 자주 걸렸던 문제들(자동감지 우선순위, 빌드 타임 크래시, 토큰 형식 오류 등)은 전부 "실행해봐야만" 드러났다.
+- 성공하면: 사용자에게 실제로 뭐라고 답했는지 보여준다
+- 실패하면: 에러 메시지를 그대로 보여주지 말고, "비개발자 사용자를 상대할 때" 섹션대로 원인과 다음 행동을 요약해서 전달한다 — 그리고 스스로 고칠 수 있는 문제(위 검증된 함정들)면 고치고 나서 다시 검증한다
+
+**4단계 — 에러 핸들링 코드 확정**
+`run()`은 실패 시 throw하므로 try/catch로 감싼 최종 코드를 남긴다 (3단계에서 확인한 에러 케이스가 실제로 잡히는지 재확인).
 
 ## 타입/모델 참고
 
