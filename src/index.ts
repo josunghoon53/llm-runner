@@ -39,28 +39,20 @@ export type {
   OpenAiApiModel,
 } from './constants/ai-models.constants.js';
 
-export { isCommandOnPath, assertCommandOnPath } from './ai-cli-check.js';
-
+// --- 설치/배포 상태 점검 ---
+// 세션 복원, 토큰 회전 저장, 실행파일 탐지는 러너가 알아서 하므로 공개하지 않는다.
+// 여기 있는 건 "사용자가 직접 확인하거나 배선해야 하는 것"뿐이다.
 export {
   checkSubscriptionSetup,
   checkClaudeStatus,
   checkCodexStatus,
 } from './setup/check-status.js';
 export type { CliStatus, SubscriptionSetupReport } from './setup/check-status.js';
-export {
-  restoreCodexSessionFromEnv,
-  restoreCodexSession,
-  persistRotatedCodexAuth,
-  getRefreshedCodexAuthJson,
-  checkCodexAuthFreshness,
-} from './setup/restore-session.js';
-export type {
-  CodexAuthStore,
-  RestoreCodexSessionOptions,
-  CodexAuthFreshness,
-} from './setup/restore-session.js';
-export {
-  resolveCodexBinaryPath,
-  tryResolveCodexBinaryPath,
-  resolveCodexExecutable,
-} from './setup/resolve-codex-binary.js';
+
+/** 갱신된 Codex 토큰을 보관할 저장소를 직접 배선할 때 쓴다 (`createAiRunner({ codexAuthStore })`). */
+export type { CodexAuthStore } from './setup/restore-session.js';
+/** 배포된 토큰이 언제 만료되는지 진단한다. 토큰 값 자체는 반환하지 않는다. */
+export { checkCodexAuthFreshness, getRefreshedCodexAuthJson } from './setup/restore-session.js';
+export type { CodexAuthFreshness } from './setup/restore-session.js';
+/** 배포 후 "바이너리가 실렸는지" 확인하는 헬스체크용. 못 찾으면 undefined. */
+export { tryResolveCodexBinaryPath, resolveCodexBinaryPath } from './setup/resolve-codex-binary.js';

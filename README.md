@@ -518,7 +518,7 @@ npx llm-runner-setup --codex-auth-json
 
 OS별 `base64`/`pbcopy` 명령 차이를 몰라도 되고, 파일 위치도 몰라도 된다. `--vercel`은 값을 터미널에 출력하지 않고 `vercel env add`의 stdin으로 곧장 흘려보내므로, 화면·스크롤백·셸 히스토리 어디에도 시크릿이 남지 않는다(환경을 바꾸려면 `--env preview`, 팀 계정이면 `--scope <팀>`을 덧붙인다). 직접 출력하는 경우엔 민감한 값이니 캡처나 공유는 하지 말 것.
 
-나온 값을 배포 환경의 `CODEX_AUTH_JSON` 비밀 값으로 저장하세요. `createAiRunner({ provider: 'openai-subscription' })` 또는 `restoreCodexSessionFromEnv()`가 실행될 때 이 값이 있으면, `codex login`을 거치지 않고 그 내용을 그대로 `$CODEX_HOME/auth.json`에 써서 세션을 복원합니다.
+나온 값을 배포 환경의 `CODEX_AUTH_JSON` 비밀 값으로 저장하세요. `createAiRunner({ provider: 'openai-subscription' })`을 만들 때 이 값이 있으면, `codex login`을 거치지 않고 그 내용을 그대로 `$CODEX_HOME/auth.json`에 써서 세션을 복원합니다 — 복원은 자동이라 따로 부를 함수가 없습니다.
 
 > ⚠️ **`CODEX_ACCESS_TOKEN` + `codex login --with-access-token` 방식은 개인 계정에서 동작하지 않습니다** — 직접 검증함. 이 방식은 **ChatGPT Business/Enterprise 워크스페이스 관리자 콘솔에서 발급한 토큰만 지원**하며, 개인 계정의 일반 세션 토큰을 넣으면 `agent identity JWT payload is not valid JSON`라는, 원인을 짐작하기 어려운 에러로 실패합니다. Business/Enterprise 워크스페이스를 쓰는 게 아니라면 `CODEX_ACCESS_TOKEN`을 시도하지 말고 바로 `CODEX_AUTH_JSON`을 쓰세요.
 
@@ -592,7 +592,7 @@ store 없이 직접 파이프라인을 짜고 싶으면 `getRefreshedCodexAuthJs
 
 ### 설계 원칙: 이 패키지는 OAuth를 직접 구현하지 않습니다
 
-`ClaudeSubscriptionRunner`, `OpenAiSubscriptionRunner`, `llm-runner-setup --login`, `restoreCodexSessionFromEnv` — 이 중 어느 것도 Anthropic/OpenAI의 OAuth 프로토콜을 직접 구현하지 않습니다.
+`ClaudeSubscriptionRunner`, `OpenAiSubscriptionRunner`, `llm-runner-setup --login`, `CODEX_AUTH_JSON` 복원 — 이 중 어느 것도 Anthropic/OpenAI의 OAuth 프로토콜을 직접 구현하지 않습니다.
 
 - **로그인**은 항상 공식 CLI 명령(`claude login`, `codex login`)을 `stdio: 'inherit'`로 그대로 실행합니다. 사용자가 직접 브라우저에서 Anthropic/OpenAI에 로그인하고, 우리 코드는 그 과정을 지켜보지도, 개입하지도 않습니다.
 - **호출**은 `@anthropic-ai/claude-agent-sdk`/`@openai/codex-sdk`가 이미 로그인된 로컬 세션을 읽어서 처리하며, 우리 코드는 토큰을 직접 보거나 저장하지 않습니다.
