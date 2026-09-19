@@ -119,22 +119,68 @@ console.log(result.text);
 
 ### NestJS처럼 설정 주입을 쓰는 프레임워크라면
 
-llm-runner는 기본적으로 `process.env`를 직접 읽습니다. 하지만 NestJS의 `ConfigService`처럼 **설정의 단일 출처가 따로 있는 구조**라면, 환경변수에 의존하지 말고 값을 명시적으로 넘기세요:
+`llm-runner`는 기본적으로 `process.env`를 읽습니다. NestJS의 `ConfigService`처럼 **설정의 단일 출처가 따로 있는 구조**라면 값을 명시적으로 넘기세요. 아래는 그대로 복사해서 쓸 수 있는 전체 예제입니다(실제 NestJS 서비스에 이식해서 검증한 구성입니다).
+
+**1. 주입 토큰을 정의합니다.** llm-runner가 제공하는 게 아니라, 여러분 앱에서 만드는 심볼입니다:
 
 ```ts
-{
-  provide: AI_RUNNER,
-  inject: [ConfigService],
-  useFactory: (config: ConfigService) =>
-    createAiRunner({
-      provider: config.get<string>('AI_PROVIDER') as AiProvider,
-      claudeApiKey: config.get<string>('ANTHROPIC_API_KEY'),
-      claudeSubscriptionDefaultModel: config.get<string>('CLAUDE_SUBSCRIPTION_DEFAULT_MODEL'),
-    }),
+// ai/ai.constants.ts
+export const AI_RUNNER = Symbol('AI_RUNNER');
+```
+
+**2. 모듈에서 팩토리로 만들어 내보냅니다:**
+
+```ts
+// ai/ai.module.ts
+import { Module } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { createAiRunner, type AiProvider, type AiRunner } from 'llm-runner';
+import { AI_RUNNER } from './ai.constants.js';
+
+@Module({
+  providers: [
+    {
+      provide: AI_RUNNER,
+      inject: [ConfigService],
+      useFactory: (config: ConfigService): AiRunner =>
+        createAiRunner({
+          provider: config.get<string>('AI_PROVIDER') as AiProvider,
+          claudeApiKey: config.get<string>('ANTHROPIC_API_KEY'),
+          claudeSubscriptionDefaultModel: config.get<string>('CLAUDE_SUBSCRIPTION_DEFAULT_MODEL'),
+        }),
+    },
+  ],
+  exports: [AI_RUNNER],
+})
+export class AiModule {}
+```
+
+**3. 서비스에서 주입받아 씁니다:**
+
+```ts
+// ai/ai.service.ts
+import { Inject, Injectable } from '@nestjs/common';
+import type { AiRunner } from 'llm-runner';
+import { AI_RUNNER } from './ai.constants.js';
+
+@Injectable()
+export class AiService {
+  constructor(@Inject(AI_RUNNER) private readonly runner: AiRunner) {}
+
+  async summarize(text: string): Promise<string> {
+    const { text: answer } = await this.runner.run({ prompt: `요약해줘:\n${text}` });
+    return answer;
+  }
 }
 ```
 
-`ConfigModule.forRoot()`가 `.env`를 `process.env`에도 올려주므로 안 넘겨도 대개 동작하지만, 설정 출처가 두 개가 되면 나중에 원인을 찾기 어려워집니다. 실제 NestJS 프로젝트에 이식하면서 확인한 부분입니다.
+마지막으로 `AppModule`에 `ConfigModule.forRoot({ isGlobal: true })`와 `AiModule`을 `imports`에 넣으면 끝입니다.
+
+몇 가지 주의점:
+
+- **`createAiRunner()`를 파일 최상단에서 부르지 마세요.** 위처럼 팩토리 안에서 부르면 부팅 시점에 실행되므로 안전합니다. 최상단에서 부르면 모듈을 import하는 것만으로 CLI 설치 검사가 돌아서, 빌드 서버처럼 CLI가 없는 환경에서 빌드가 깨질 수 있습니다.
+- **타입은 `AiRunner`, `AiProvider`, `AiSession`, `AiRunResult` 등이 모두 패키지에서 import됩니다** — 위 예제처럼 `import type { AiRunner } from 'llm-runner'`로 가져오세요.
+- `ConfigModule.forRoot()`가 `.env`를 `process.env`에도 올려주므로 값을 안 넘겨도 대개 동작하지만, **그러면 설정 출처가 두 개가 됩니다.** 나중에 `.env`가 아닌 곳(시크릿 매니저, DB)에서 설정을 읽도록 바꾸는 순간 조용히 어긋나므로, 처음부터 넘기는 편을 권합니다.
 
 ### 프론트엔드(React 등)에서 쓰려면
 
@@ -335,6 +381,48 @@ console.log(session.activePath); // 'fast' | 'stable' (첫 send 전에는 'pendi
 - `session.activePath`: **지금** 어느 경로인지 확인합니다. 성능이 기대와 다르면 여기부터 보세요.
 
 핸들러를 주면 stderr 경고는 생략되고(같은 내용을 두 번 알리지 않음), 핸들러에서 예외가 나도 AI 호출은 그대로 성공합니다.
+
+이벤트의 전체 모양은 이렇습니다:
+
+```ts
+interface AiFallbackEvent {
+  feature: 'session' | 'stream';
+  phase: 'start' | 'mid-session';
+  from: string;          // 예: 'codex-app-server'
+  to: string;            // 예: 'codex-sdk'
+  reason: string;        // 사람이 읽을 수 있는 사유
+  cause?: unknown;       // 원본 Error 객체
+}
+```
+
+> ⚠️ **로그에 남길 땐 `reason`을 쓰세요.** `cause`는 `Error` 객체라서 `JSON.stringify()`를 거치면 `{}`로 납작해집니다 — JSON으로 직렬화하는 로거에 이벤트를 통째로 넘기면 정작 원인이 사라집니다.
+> ```ts
+> onFallback: (e) => logger.warn(`llm-runner 폴백: ${e.feature}/${e.phase} — ${e.reason}`)
+> ```
+
+#### 배포 전에 이 배선이 진짜 동작하는지 시험하기
+
+`onFallback`을 로거에 연결해두고 **정작 그 배선이 맞는지는 실제 장애가 나야 알게 되는** 상황을 피하려면, 폴백을 일부러 한 번 일으켜보면 됩니다. 빠른 경로는 `codex app-server`를 실행해서 쓰므로, 그 서브커맨드만 실패하는 가짜 `codex`를 만들어 `codexPathOverride`로 가리키면 됩니다:
+
+```bash
+# fake-codex — app-server만 모르는 척하고 나머지는 진짜 codex로 넘긴다
+cat > /tmp/fake-codex <<'EOF'
+#!/bin/sh
+[ "$1" = "app-server" ] && { echo "unrecognized subcommand" >&2; exit 2; }
+exec "$(which codex)" "$@"
+EOF
+chmod +x /tmp/fake-codex
+```
+
+```ts
+const runner = createAiRunner({
+  provider: 'openai-subscription',
+  codexPathOverride: '/tmp/fake-codex',   // 평소엔 지정하지 마세요 — 시험용입니다
+  onFallback: (e) => logger.warn('폴백', e),
+});
+```
+
+이러면 `phase: 'start'` 이벤트가 실제로 날아오고 `session.activePath`가 `'stable'`이 되는 걸 눈으로 확인할 수 있습니다. 확인이 끝나면 `codexPathOverride`를 지우면 됩니다.
 
 `claude-subscription`의 `createSession()`과 똑같은 오염 규칙이 적용된다 — 직접 검증함: 같은 세션 안에서는 이전 턴 내용을 정확히 기억하고(의도된 동작), 서로 다른 세션 인스턴스는 완전히 격리된다. 그래서 **서로 무관해야 하는 작업(종목 A 분석, 종목 B 분석 등)은 매번 새 세션을 만들어야 하고, 세션 하나를 여러 독립 작업에 재사용하면 안 된다.**
 

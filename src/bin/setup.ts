@@ -6,6 +6,7 @@ import { basename, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { checkClaudeStatus, checkCodexStatus, type CliStatus } from '../setup/check-status.js';
 import { checkCodexAuthFreshness } from '../setup/restore-session.js';
+import { classifyRoutes } from '../setup/deploy-check.js';
 import type { AiProvider } from '../create-ai-runner.js';
 
 const args = process.argv.slice(2);
@@ -248,16 +249,43 @@ function checkRouteGlobs(config: string): number {
   console.log(`   선언된 라우트: ${declared.join(', ')}`);
   console.log(`   실제 라우트:   ${actual.join(', ')}`);
 
-  const unmatched = actual.filter((route) => !declared.some((pattern) => globMatches(pattern, route)));
-  if (unmatched.length === 0) {
+  const { harmless, problems } = classifyRoutes(
+    declared,
+    actual.map((route) => ({ route, usesLlmRunner: routeImportsLlmRunner(route) })),
+  );
+
+  if (harmless.length === 0 && problems.length === 0) {
     console.log('   ✅ 실제 라우트가 모두 설정 범위 안에 있습니다.');
     return 0;
   }
+  if (harmless.length > 0) {
+    console.log(`   ℹ️  설정 범위 밖이지만 llm-runner를 안 쓰는 라우트(문제 아님): ${harmless.join(', ')}`);
+  }
+  if (problems.length === 0) return 0;
 
-  console.log(`   ⚠️  설정에 안 걸리는 라우트: ${unmatched.join(', ')}`);
-  console.log('      이 라우트에서 llm-runner를 호출한다면 배포 후 "실행파일을 찾을 수 없다"로 실패합니다.');
-  console.log('      (AI를 안 쓰는 라우트라면 무시해도 됩니다.)');
+  console.log(`   ❌ llm-runner를 호출하는데 설정에 안 걸리는 라우트: ${problems.join(', ')}`);
+  console.log('      이대로 배포하면 "실행파일을 찾을 수 없다"로 실패합니다.');
+  console.log(`      고치기: withLlmRunner()의 routes에 ${problems.map((r) => `'${r}'`).join(', ')}를 추가하세요.`);
   return 1;
+}
+
+/** 그 라우트 파일이 실제로 llm-runner를 import하는지 본다. 안 쓰면 번들링 대상이 아니다. */
+function routeImportsLlmRunner(route: string): boolean {
+  for (const file of routeFilesFor(route)) {
+    try {
+      if (/from\s+['"]llm-runner/.test(readFileSync(file, 'utf-8'))) return true;
+    } catch {
+      // 못 읽으면 판단할 수 없으니 넘어간다.
+    }
+  }
+  return false;
+}
+
+function routeFilesFor(route: string): string[] {
+  const relative = route.replace(/^\/api\/?/, '');
+  const bases = [join(process.cwd(), 'app', 'api'), join(process.cwd(), 'src', 'app', 'api')];
+  const names = ['route.ts', 'route.tsx', 'route.js', 'route.mts', 'route.mjs'];
+  return bases.flatMap((base) => names.map((name) => join(base, relative, name)));
 }
 
 function findApiRoutes(): string[] {
@@ -279,15 +307,6 @@ function findApiRoutes(): string[] {
 
   for (const root of roots) walk(root, '/api');
   return found;
-}
-
-/** picomatch 같은 의존성을 들이지 않으려고 `*`/`**`만 지원하는 최소 구현을 쓴다. */
-function globMatches(pattern: string, path: string): boolean {
-  const regex = pattern
-    .split('**')
-    .map((part) => part.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '[^/]*'))
-    .join('.*');
-  return new RegExp(`^${regex}$`).test(path);
 }
 
 function readJsonIfExists(path: string): Record<string, Record<string, string>> | undefined {
