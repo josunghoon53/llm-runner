@@ -1,4 +1,5 @@
 import { vi } from 'vitest';
+import { join } from 'node:path';
 
 const spawnSyncMock = vi.fn();
 vi.mock('node:child_process', () => ({ spawnSync: spawnSyncMock }));
@@ -108,8 +109,10 @@ describe('restoreCodexSessionFromEnv — CODEX_AUTH_JSON (개인 계정용)', ()
 
     freshRestore();
 
+    // 경로 구분자는 OS마다 다르다(Windows는 \). 직접 이어붙이면 Windows CI에서만 깨진다 —
+    // 실제로 CI를 처음 돌렸을 때 이 단언 때문에 Windows 2개 job이 실패했다.
     expect(writeFileSyncMock).toHaveBeenCalledWith(
-      '/custom/codex/home/auth.json',
+      join('/custom/codex/home', 'auth.json'),
       '{"tokens":{"access_token":"a"}}',
       expect.anything(),
     );
