@@ -1,6 +1,6 @@
 import { assertCommandOnPath } from './ai-cli-check.js';
 import { checkClaudeStatus, checkCodexStatus } from './setup/check-status.js';
-import type { AiRunner } from './interfaces/ai-runner.interface.js';
+import type { AiFallbackEvent, AiRunner } from './interfaces/ai-runner.interface.js';
 import { ClaudeApiRunner } from './runners/claude-api.runner.js';
 import { ClaudeSubscriptionRunner } from './runners/claude-subscription.runner.js';
 import { OpenAiApiRunner } from './runners/openai-api.runner.js';
@@ -117,6 +117,16 @@ export interface CreateAiRunnerOptions {
    * 설정하면 토큰 회전 감지와 저장을 llm-runner가 자동으로 처리한다. README "Codex" 섹션 참고.
    */
   codexAuthStore?: CodexAuthStore;
+  /**
+   * 내부적으로 빠른 경로에서 안정 경로로 내려앉을 때 호출된다(현재 `openai-subscription`만 해당).
+   * **서버리스에 배포한다면 꼭 연결해라** — 기본값은 stderr 경고인데 거기선 아무 데도 안 남아서,
+   * 몇 달간 느린 경로로만 돌아도 알 방법이 없다.
+   *
+   * ```ts
+   * createAiRunner({ provider: 'openai-subscription', onFallback: (e) => logger.warn('llm 폴백', e) })
+   * ```
+   */
+  onFallback?: (event: AiFallbackEvent) => void;
 
   /**
    * 구독 provider를 선택했는데 로컬에 해당 CLI(`claude`/`codex`)가 PATH에 없으면
@@ -180,6 +190,7 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
         defaultModel: options.openAiSubscriptionDefaultModel,
         codexPathOverride: options.codexPathOverride,
         codexAuthStore: options.codexAuthStore,
+        onFallback: options.onFallback,
       });
     case 'claude-subscription':
       return new ClaudeSubscriptionRunner({

@@ -43,6 +43,28 @@ export type AiStreamEvent =
   /** 생성 완료. 전체 텍스트와 (제공되는 경우) 사용량이 들어 있다. */
   | { type: 'done'; result: AiRunResult };
 
+/**
+ * 내부적으로 더 빠른 경로를 쓰다가 안정 경로로 내려앉았을 때 알려주는 이벤트.
+ *
+ * 폴백은 앱을 안 죽이는 대신 **조용히 느려진다**는 게 문제다. 로컬 개발이면 stderr 경고로
+ * 눈에 띄지만, 서버리스에서는 그 경고가 아무 데도 안 남아서 몇 달간 느린 경로로만 돌아도
+ * 알 방법이 없다. 그래서 구조화된 이벤트로 받아서 각자의 로그/모니터링에 넣을 수 있게 한다.
+ */
+export interface AiFallbackEvent {
+  /** 어떤 기능에서 일어났는지. */
+  feature: 'session' | 'stream';
+  /** 시작 시점에 못 쓴 건지, 쓰다가 끊긴 건지. 후자는 원인이 다르므로 구분할 가치가 있다. */
+  phase: 'start' | 'mid-session';
+  /** 원래 쓰려던 경로. */
+  from: string;
+  /** 실제로 쓰게 된 경로. */
+  to: string;
+  /** 사람이 읽을 수 있는 사유. */
+  reason: string;
+  /** 원본 에러. */
+  cause?: unknown;
+}
+
 export interface AiRunner {
   run(options: AiRunOptions): Promise<AiRunResult>;
 

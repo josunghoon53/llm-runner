@@ -4,6 +4,7 @@ export type {
   AiRunResult,
   AiStreamEvent,
   AiUsage,
+  AiFallbackEvent,
 } from './interfaces/ai-runner.interface.js';
 export type { AiSession } from './interfaces/ai-session.interface.js';
 export { createAiRunner, AI_PROVIDERS } from './create-ai-runner.js';

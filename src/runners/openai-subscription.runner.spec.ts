@@ -530,3 +530,110 @@ describe('OpenAiSubscriptionRunner 세션 스트리밍 (sendStream)', () => {
     }).rejects.toThrow(/close\(\)된 세션/);
   });
 });
+
+describe('폴백 관측 (onFallback / activePath)', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    runMock.mockReset();
+    startThreadMock.mockClear();
+    createAppServerSessionMock.mockReset();
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  afterEach(() => warnSpy.mockRestore());
+
+  it('빠른 경로를 쓰면 activePath가 fast다', async () => {
+    createAppServerSessionMock.mockResolvedValue({ send: vi.fn(async () => ({ text: 'ok' })), sendStream: vi.fn(), close: vi.fn() });
+
+    const session = new OpenAiSubscriptionRunner().createSession();
+    expect(session.activePath).toBe('pending'); // 첫 send 전에는 미정
+    await session.send('질문');
+
+    expect(session.activePath).toBe('fast');
+  });
+
+  it('시작 시 폴백되면 activePath가 stable이고 구조화된 이벤트가 온다', async () => {
+    createAppServerSessionMock.mockRejectedValue(new Error('app-server 없음'));
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+    const events: unknown[] = [];
+
+    const session = new OpenAiSubscriptionRunner({ onFallback: (e) => events.push(e) }).createSession();
+    await session.send('질문');
+
+    expect(session.activePath).toBe('stable');
+    expect(events).toEqual([
+      expect.objectContaining({
+        feature: 'session',
+        phase: 'start',
+        from: 'codex-app-server',
+        to: 'codex-sdk',
+        reason: 'app-server 없음',
+      }),
+    ]);
+  });
+
+  it('대화 도중 끊기면 phase가 mid-session으로 구분돼서 온다 (원인이 다르므로)', async () => {
+    const send = vi.fn().mockResolvedValueOnce({ text: '첫 답변' }).mockRejectedValueOnce(new Error('프로세스 종료됨'));
+    createAppServerSessionMock.mockResolvedValue({ send, sendStream: vi.fn(), close: vi.fn() });
+    runMock.mockResolvedValue({ finalResponse: '복구됨' });
+    const events: Array<{ phase: string }> = [];
+
+    const session = new OpenAiSubscriptionRunner({ onFallback: (e) => events.push(e) }).createSession();
+    await session.send('1');
+    await session.send('2');
+
+    expect(events.map((e) => e.phase)).toEqual(['mid-session']);
+    expect(session.activePath).toBe('stable');
+  });
+
+  it('핸들러를 주면 stderr 경고는 찍지 않는다 (같은 내용을 두 번 알리지 않는다)', async () => {
+    createAppServerSessionMock.mockRejectedValue(new Error('없음'));
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    const session = new OpenAiSubscriptionRunner({ onFallback: () => {} }).createSession();
+    await session.send('질문');
+
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('핸들러가 없으면 최소한 stderr에는 남긴다', async () => {
+    createAppServerSessionMock.mockRejectedValue(new Error('없음'));
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    const session = new OpenAiSubscriptionRunner().createSession();
+    await session.send('질문');
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('공식 SDK 경로로 전환'));
+  });
+
+  it('핸들러가 예외를 던져도 AI 호출은 성공한다 (알림은 부수적인 일이다)', async () => {
+    createAppServerSessionMock.mockRejectedValue(new Error('없음'));
+    runMock.mockResolvedValue({ finalResponse: '정상 응답' });
+
+    const session = new OpenAiSubscriptionRunner({
+      onFallback: () => {
+        throw new Error('로거 장애');
+      },
+    }).createSession();
+
+    await expect(session.send('질문')).resolves.toMatchObject({ text: '정상 응답' });
+  });
+
+  it('stream()의 폴백도 feature: stream으로 알려준다', async () => {
+    createAppServerSessionMock.mockRejectedValue(new Error('없음'));
+    runStreamedMock.mockResolvedValue({
+      events: (async function* () {
+        yield { type: 'item.completed', item: { type: 'agent_message', text: 'ok' } };
+      })(),
+    });
+    const events: Array<{ feature: string }> = [];
+
+    const runner = new OpenAiSubscriptionRunner({ onFallback: (e) => events.push(e) });
+    for await (const _ of runner.stream({ prompt: '질문' })) {
+      // 소비만 한다
+    }
+
+    expect(events.map((e) => e.feature)).toEqual(['stream']);
+  });
+});

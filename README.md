@@ -117,6 +117,25 @@ console.log(result.text);
 
 `.env`의 `AI_PROVIDER`로 전역 기본값을 정하거나, `createAiRunner({ provider: '...' })`로 명시적으로 고를 수 있습니다.
 
+### NestJS처럼 설정 주입을 쓰는 프레임워크라면
+
+llm-runner는 기본적으로 `process.env`를 직접 읽습니다. 하지만 NestJS의 `ConfigService`처럼 **설정의 단일 출처가 따로 있는 구조**라면, 환경변수에 의존하지 말고 값을 명시적으로 넘기세요:
+
+```ts
+{
+  provide: AI_RUNNER,
+  inject: [ConfigService],
+  useFactory: (config: ConfigService) =>
+    createAiRunner({
+      provider: config.get<string>('AI_PROVIDER') as AiProvider,
+      claudeApiKey: config.get<string>('ANTHROPIC_API_KEY'),
+      claudeSubscriptionDefaultModel: config.get<string>('CLAUDE_SUBSCRIPTION_DEFAULT_MODEL'),
+    }),
+}
+```
+
+`ConfigModule.forRoot()`가 `.env`를 `process.env`에도 올려주므로 안 넘겨도 대개 동작하지만, 설정 출처가 두 개가 되면 나중에 원인을 찾기 어려워집니다. 실제 NestJS 프로젝트에 이식하면서 확인한 부분입니다.
+
 ### 프론트엔드(React 등)에서 쓰려면
 
 `llm-runner`는 Node.js 전용이라 브라우저에서 직접 못 씁니다. 프론트 → 내 백엔드 API → `llm-runner` 구조로 감싸야 합니다. 바로 복붙해서 쓸 수 있는 Next.js 예제: [`examples/nextjs-starter/`](./examples/nextjs-starter/README.md)
@@ -295,6 +314,27 @@ Codex는 여기까지 오는 데 우회로가 하나 필요했다. 공식 `@open
 | 대화 도중 `app-server` 프로세스를 강제 종료(`pkill`) | 경고 후 자동 전환 + 지금까지의 대화를 복구 프롬프트로 이어붙임 → 이전 턴 내용("47")을 그대로 기억 |
 
 속도보다 예측 가능성이 중요하면 `createSession({ fastMode: 'off' })`로 항상 공식 SDK 경로만 쓰게 할 수 있다. 웹 검색(`enableWebSearch: true`)은 빠른 경로가 지원하지 않아 자동으로 공식 경로를 쓴다.
+
+#### 폴백은 조용히 일어납니다 — 배포했다면 꼭 연결하세요
+
+폴백의 대가는 "앱이 안 죽는 대신 **조용히 느려진다**"는 것입니다. 로컬에서는 stderr 경고가 보이지만 **서버리스에서는 그 경고가 아무 데도 안 남아서**, 몇 달간 느린 경로로만 돌아도 알 수 없습니다. 그래서 두 가지를 제공합니다:
+
+```ts
+const runner = createAiRunner({
+  provider: 'openai-subscription',
+  onFallback: (event) => logger.warn('llm-runner 폴백', event),
+  // { feature: 'session', phase: 'start', from: 'codex-app-server', to: 'codex-sdk', reason: '...' }
+});
+
+const session = runner.createSession();
+await session.send('...');
+console.log(session.activePath); // 'fast' | 'stable' (첫 send 전에는 'pending')
+```
+
+- `onFallback`: 내려앉는 **순간**을 구조화된 이벤트로 받습니다. `phase`가 `'start'`면 처음부터 못 쓴 것이고 `'mid-session'`이면 쓰다가 끊긴 것이라 원인이 다릅니다.
+- `session.activePath`: **지금** 어느 경로인지 확인합니다. 성능이 기대와 다르면 여기부터 보세요.
+
+핸들러를 주면 stderr 경고는 생략되고(같은 내용을 두 번 알리지 않음), 핸들러에서 예외가 나도 AI 호출은 그대로 성공합니다.
 
 `claude-subscription`의 `createSession()`과 똑같은 오염 규칙이 적용된다 — 직접 검증함: 같은 세션 안에서는 이전 턴 내용을 정확히 기억하고(의도된 동작), 서로 다른 세션 인스턴스는 완전히 격리된다. 그래서 **서로 무관해야 하는 작업(종목 A 분석, 종목 B 분석 등)은 매번 새 세션을 만들어야 하고, 세션 하나를 여러 독립 작업에 재사용하면 안 된다.**
 

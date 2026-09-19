@@ -1,5 +1,6 @@
 import { Codex, type Thread, type Usage } from '@openai/codex-sdk';
 import type {
+  AiFallbackEvent,
   AiRunner,
   AiRunOptions,
   AiRunResult,
@@ -40,6 +41,11 @@ export interface OpenAiSubscriptionRunnerOptions {
    * 없으면 환경변수에 넣어둔 스냅샷이 토큰 회전 이후 언젠가 조용히 만료된다.
    */
   codexAuthStore?: CodexAuthStore;
+  /**
+   * 빠른 경로에서 안정 경로로 내려앉을 때 호출된다. 지정하지 않으면 stderr에 경고만 남기는데,
+   * 서버리스에서는 그게 아무 데도 안 남아서 성능 저하를 영영 모를 수 있다.
+   */
+  onFallback?: (event: AiFallbackEvent) => void;
 }
 
 export interface OpenAiSubscriptionSessionOptions {
@@ -128,6 +134,8 @@ class CodexHybridSession implements AiSession {
   private fast: CodexAppServerStreamingSession | undefined;
   private stable: AiSession | undefined;
   private initialized = false;
+  /** 지금 어느 경로로 도는지. 폴백이 조용히 일어나므로 밖에서 확인할 수 있어야 한다. */
+  activePath: 'pending' | 'fast' | 'stable' = 'pending';
   private readonly transcript: TranscriptEntry[] = [];
   /** 빠른 경로에서 안정 경로로 넘어갈 때, 다음 1회 호출에만 대화 기록을 붙인다. */
   private needsReplay = false;
@@ -136,31 +144,51 @@ class CodexHybridSession implements AiSession {
     private readonly createFast: () => Promise<CodexAppServerStreamingSession>,
     private readonly createStable: () => AiSession,
     private readonly useFastPath: boolean,
+    private readonly onFallback: ((event: AiFallbackEvent) => void) | undefined,
   ) {}
 
   private async initialize(): Promise<void> {
     this.initialized = true;
     if (!this.useFastPath) {
       this.stable = this.createStable();
+      this.activePath = 'stable';
       return;
     }
 
     try {
       this.fast = await this.createFast();
+      this.activePath = 'fast';
     } catch (err) {
-      console.warn(
-        '[llm-runner] Codex 빠른 세션(app-server)을 시작하지 못해서 공식 SDK 경로로 전환한다. ' +
-          `동작에는 문제가 없고 턴마다 조금 느려질 뿐이다. 사유: ${err instanceof Error ? err.message : String(err)}`,
+      reportFallback(
+        this.onFallback,
+        {
+          feature: 'session',
+          phase: 'start',
+          from: 'codex-app-server',
+          to: 'codex-sdk',
+          reason: describeError(err),
+          cause: err,
+        },
+        'Codex 빠른 세션(app-server)을 시작하지 못해 공식 SDK 경로로 전환한다. 동작엔 문제없고 턴마다 조금 느려진다.',
       );
       this.stable = this.createStable();
+      this.activePath = 'stable';
     }
   }
 
   /** 빠른 경로가 도중에 깨졌을 때 안정 경로로 갈아탄다. 맥락은 다음 호출에서 복구한다. */
   private degradeToStable(err: unknown): void {
-    console.warn(
-      '[llm-runner] Codex 빠른 세션이 도중에 끊겨서 공식 SDK 경로로 전환한다. ' +
-        `지금까지의 대화 맥락은 이어서 복구한다. 사유: ${err instanceof Error ? err.message : String(err)}`,
+    reportFallback(
+      this.onFallback,
+      {
+        feature: 'session',
+        phase: 'mid-session',
+        from: 'codex-app-server',
+        to: 'codex-sdk',
+        reason: describeError(err),
+        cause: err,
+      },
+      'Codex 빠른 세션이 대화 도중 끊겨 공식 SDK 경로로 전환한다. 지금까지의 맥락은 복구한다.',
     );
     try {
       this.fast?.close();
@@ -169,6 +197,7 @@ class CodexHybridSession implements AiSession {
     }
     this.fast = undefined;
     this.stable = this.createStable();
+    this.activePath = 'stable';
     this.needsReplay = true;
   }
 
@@ -247,12 +276,28 @@ const CAPACITY_FALLBACK: Record<string, string> = {
   [CODEX_MODELS.TERRA]: CODEX_MODELS.SOL,
 };
 
-function warnStreamFallback(err: unknown): void {
-  console.warn(
-    '[llm-runner] Codex 글자 단위 스트리밍(app-server)을 쓸 수 없어서 공식 SDK 경로로 전환한다. ' +
-      '동작은 같지만 텍스트가 한 덩어리로 도착한다. 사유: ' +
-      (err instanceof Error ? err.message : String(err)),
-  );
+/**
+ * 폴백을 알린다. 핸들러가 있으면 그쪽으로만 보내고(중복 소음 방지), 없으면 stderr에 경고한다.
+ * 핸들러에서 예외가 나도 본래 작업을 망치지 않는다 — 알림은 부수적인 일이다.
+ */
+function reportFallback(
+  handler: ((event: AiFallbackEvent) => void) | undefined,
+  event: AiFallbackEvent,
+  humanMessage: string,
+): void {
+  if (!handler) {
+    console.warn(`[llm-runner] ${humanMessage} 사유: ${event.reason}`);
+    return;
+  }
+  try {
+    handler(event);
+  } catch {
+    // 사용자 핸들러가 던져도 AI 호출까지 실패시키지 않는다.
+  }
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 function toUsage(usage: Usage | null | undefined): AiUsage | undefined {
@@ -294,10 +339,12 @@ export class OpenAiSubscriptionRunner implements AiRunner {
   private readonly defaultModel: string;
   private readonly codexPath: string | undefined;
   private readonly authStore: CodexAuthStore | undefined;
+  private readonly onFallback: ((event: AiFallbackEvent) => void) | undefined;
   private readyPromise: Promise<unknown> | undefined;
 
   constructor(options: OpenAiSubscriptionRunnerOptions = {}) {
     this.authStore = options.codexAuthStore;
+    this.onFallback = options.onFallback;
     // PATH의 codex → 번들 바이너리 순으로 자동 결정한다. 사용자가 경로를 직접 쓸 필요가 없다.
     this.codexPath = resolveCodexExecutable(options.codexPathOverride);
 
@@ -329,6 +376,21 @@ export class OpenAiSubscriptionRunner implements AiRunner {
       codexPathOverride: this.codexPath,
     });
     await this.readyPromise;
+  }
+
+  private reportStreamFallback(phase: AiFallbackEvent['phase'], err: unknown): void {
+    reportFallback(
+      this.onFallback,
+      {
+        feature: 'stream',
+        phase,
+        from: 'codex-app-server',
+        to: 'codex-sdk',
+        reason: describeError(err),
+        cause: err,
+      },
+      'Codex 글자 단위 스트리밍(app-server)을 쓸 수 없어 공식 SDK 경로로 전환한다. 텍스트가 한 덩어리로 도착한다.',
+    );
   }
 
   /** 호출 이후 토큰이 회전됐으면 store에 반영한다. 실패해도 호출 결과에는 영향을 주지 않는다. */
@@ -411,7 +473,7 @@ export class OpenAiSubscriptionRunner implements AiRunner {
         try {
           session = await createExperimentalCodexAppServerSession({ model, codexPathOverride: this.codexPath });
         } catch (err) {
-          warnStreamFallback(err);
+          this.reportStreamFallback('start', err);
         }
 
         if (session) {
@@ -425,7 +487,7 @@ export class OpenAiSubscriptionRunner implements AiRunner {
           } catch (err) {
             // 이미 일부를 내보낸 뒤에 실패하면 폴백할 수 없다 — 다시 처음부터 받으면 중복된다.
             if (emittedAnything) throw wrapCodexError(err);
-            warnStreamFallback(err);
+            this.reportStreamFallback('start', err);
           } finally {
             session.close();
           }
@@ -524,6 +586,6 @@ export class OpenAiSubscriptionRunner implements AiRunner {
       });
     };
 
-    return new CodexHybridSession(createFast, createStable, useFastPath);
+    return new CodexHybridSession(createFast, createStable, useFastPath, this.onFallback);
   }
 }

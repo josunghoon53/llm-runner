@@ -22,6 +22,18 @@ export interface AiSession {
    */
   sendStream(prompt: string): AsyncIterable<AiStreamEvent>;
 
+  /**
+   * 지금 어느 경로로 동작 중인지. 폴백이 있는 provider(`openai-subscription`)에서만 채워진다.
+   *
+   * - `'pending'`: 아직 첫 `send()` 전이라 결정되지 않음
+   * - `'fast'`: 프로세스를 계속 살려두는 빠른 경로
+   * - `'stable'`: 공식 SDK 경로(느리지만 예측 가능)
+   *
+   * 폴백은 조용히 일어나므로, 성능이 기대와 다르면 여기부터 확인해라.
+   * 폴백이 **일어나는 순간**을 알고 싶으면 `createAiRunner({ onFallback })`을 쓴다.
+   */
+  readonly activePath?: 'pending' | 'fast' | 'stable';
+
   /** 세션이 물고 있는 프로세스를 종료한다. 세션을 더 안 쓸 때 반드시 호출한다. */
   close(): void;
 }
