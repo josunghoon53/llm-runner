@@ -17,6 +17,22 @@ vi.mock('@openai/codex-sdk', () => ({
   }),
 }));
 
+// 번들 바이너리 자동 탐지를 테스트가 직접 제어한다. 실제 파일시스템/전역 설치 상태에 따라
+// 결과가 달라지면(예전에 실제로 겪었다) 테스트가 환경에 따라 흔들린다.
+const tryResolveCodexBinaryPathMock = vi.fn<() => string | undefined>();
+vi.mock('./setup/resolve-codex-binary.js', () => ({
+  tryResolveCodexBinaryPath: tryResolveCodexBinaryPathMock,
+  resolveCodexExecutable: (override?: string) => override ?? tryResolveCodexBinaryPathMock(),
+  resolveCodexBinaryPath: vi.fn(),
+}));
+
+// 세션 복원은 실제로 `codex login`을 spawn할 수 있다 — 테스트에서 진짜 로그인 상태를 건드리면 안 된다.
+vi.mock('./setup/restore-session.js', () => ({
+  restoreCodexSessionFromEnv: vi.fn(() => false),
+  restoreCodexSession: vi.fn(async () => false),
+  persistRotatedCodexAuth: vi.fn(async () => false),
+}));
+
 const checkClaudeStatusMock = vi.fn();
 const checkCodexStatusMock = vi.fn();
 vi.mock('./setup/check-status.js', () => ({
@@ -105,15 +121,37 @@ describe('createAiRunner', () => {
       }
     });
 
-    it('CODEX_ACCESS_TOKEN이 있어도 PATH에 codex CLI가 없으면 여전히 예외를 던진다 (codex-sdk는 자체 바이너리가 없어 PATH에 의존)', () => {
+    it('PATH에 codex CLI가 없고 번들된 바이너리도 못 찾으면 예외를 던진다', () => {
       const originalPath = process.env.PATH;
       process.env.PATH = '';
-      process.env.CODEX_ACCESS_TOKEN = 'dummy-access-token';
+      tryResolveCodexBinaryPathMock.mockReturnValue(undefined);
       try {
         expect(() => createAiRunner({ provider: 'openai-subscription' })).toThrow(/PATH에서 찾을 수 없다/);
       } finally {
         process.env.PATH = originalPath;
-        delete process.env.CODEX_ACCESS_TOKEN;
+      }
+    });
+
+    it('PATH에 codex CLI가 없어도 번들된 바이너리를 찾으면 예외를 던지지 않는다 (서버리스 자동 탐지)', () => {
+      const originalPath = process.env.PATH;
+      process.env.PATH = '';
+      tryResolveCodexBinaryPathMock.mockReturnValue('/var/task/node_modules/@openai/codex-linux-x64/vendor/x/bin/codex');
+      try {
+        expect(() => createAiRunner({ provider: 'openai-subscription' })).not.toThrow();
+      } finally {
+        process.env.PATH = originalPath;
+      }
+    });
+
+    it('codexPathOverride를 주면 PATH에 codex CLI가 없어도 예외를 던지지 않는다 (번들된 바이너리로 서버리스 배포하는 시나리오)', () => {
+      const originalPath = process.env.PATH;
+      process.env.PATH = '';
+      try {
+        expect(() =>
+          createAiRunner({ provider: 'openai-subscription', codexPathOverride: '/opt/bundled/codex' }),
+        ).not.toThrow();
+      } finally {
+        process.env.PATH = originalPath;
       }
     });
   });

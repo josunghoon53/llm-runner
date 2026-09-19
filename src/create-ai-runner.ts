@@ -5,6 +5,8 @@ import { ClaudeApiRunner } from './runners/claude-api.runner.js';
 import { ClaudeSubscriptionRunner } from './runners/claude-subscription.runner.js';
 import { OpenAiApiRunner } from './runners/openai-api.runner.js';
 import { OpenAiSubscriptionRunner } from './runners/openai-subscription.runner.js';
+import { tryResolveCodexBinaryPath } from './setup/resolve-codex-binary.js';
+import type { CodexAuthStore } from './setup/restore-session.js';
 
 import { AI_PROVIDERS, type AiProvider } from './constants/ai-providers.constants.js';
 
@@ -105,6 +107,16 @@ export interface CreateAiRunnerOptions {
   openAiApiDefaultModel?: string;
 
   openAiSubscriptionDefaultModel?: string;
+  /**
+   * `codex` 실행파일 경로를 직접 지정한다. 보통 지정할 필요가 없다 — PATH에 없으면 프로젝트
+   * 의존성으로 설치된 `@openai/codex`의 번들 바이너리를 자동으로 찾는다. README "Codex" 섹션 참고.
+   */
+  codexPathOverride?: string;
+  /**
+   * Codex 구독을 서버리스에 배포할 때, 갱신된 로그인 토큰을 보관할 외부 저장소(KV/DB 등).
+   * 설정하면 토큰 회전 감지와 저장을 llm-runner가 자동으로 처리한다. README "Codex" 섹션 참고.
+   */
+  codexAuthStore?: CodexAuthStore;
 
   /**
    * 구독 provider를 선택했는데 로컬에 해당 CLI(`claude`/`codex`)가 PATH에 없으면
@@ -126,11 +138,12 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
 
   // 자동 감지된 경우 이미 로그인/키 상태를 확인했으므로 아래 체크를 다시 할 필요가 없다.
   //
-  // claude-subscription만 예외 처리한다: @anthropic-ai/claude-agent-sdk는 플랫폼별 네이티브 바이너리를
+  // claude-subscription: @anthropic-ai/claude-agent-sdk는 플랫폼별 네이티브 바이너리를
   // 자체 optionalDependency로 갖고 있어서, CLAUDE_CODE_OAUTH_TOKEN이 있으면 PATH에 claude CLI가 없어도
-  // 실제로 동작한다(Vercel에 배포해서 직접 확인함). 반면 @openai/codex-sdk는 자체 바이너리가 없고
-  // PATH의 codex CLI에 그대로 의존하므로(우리 restoreCodexSessionFromEnv도 spawnSync('codex', ...)를 쓴다),
-  // CODEX_ACCESS_TOKEN이 있어도 PATH에 codex가 없으면 어차피 실패한다 — 이쪽은 예외를 두지 않는다.
+  // 실제로 동작한다(Vercel에 배포해서 직접 확인함).
+  // openai-subscription: @openai/codex-sdk는 자체 바이너리가 없어서 원래는 PATH의 codex CLI에
+  // 의존하지만, codexPathOverride로 번들된 바이너리를 직접 가리키면 PATH가 없어도 동작한다
+  // (이것도 Vercel에 배포해서 CODEX_AUTH_JSON과 함께 직접 검증함 — README "Codex" 섹션 참고).
   if (explicitProvider && options.checkCliOnCreate !== false) {
     if (provider === 'claude-subscription' && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
       assertCommandOnPath(
@@ -139,10 +152,14 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
           '(배포 환경이라면 CLAUDE_CODE_OAUTH_TOKEN 환경변수를 설정해도 된다 — README의 "서버리스/배포 환경에서 쓰기" 참고)',
       );
     }
-    if (provider === 'openai-subscription') {
+    // 번들된 바이너리를 자동으로 찾을 수 있으면 PATH에 codex가 없어도 문제없다 — 서버리스 배포의
+    // 정상 경로다. 명시적 override가 있는 경우도 마찬가지로 검사를 건너뛴다.
+    if (provider === 'openai-subscription' && !options.codexPathOverride && !tryResolveCodexBinaryPath()) {
       assertCommandOnPath(
         'codex',
-        "provider='openai-subscription'을 쓰려면 로컬에 Codex CLI가 설치되고 ChatGPT 계정으로 로그인되어 있어야 한다.",
+        "provider='openai-subscription'을 쓰려면 로컬에 Codex CLI가 설치되고 ChatGPT 계정으로 로그인되어 있어야 한다. " +
+          '(배포 환경이라면 `npm install @openai/codex`로 프로젝트 의존성에 추가하면 번들된 바이너리를 자동으로 찾는다 — ' +
+          'README의 "Codex" 섹션 참고)',
       );
     }
   }
@@ -161,6 +178,8 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
     case 'openai-subscription':
       return new OpenAiSubscriptionRunner({
         defaultModel: options.openAiSubscriptionDefaultModel,
+        codexPathOverride: options.codexPathOverride,
+        codexAuthStore: options.codexAuthStore,
       });
     case 'claude-subscription':
       return new ClaudeSubscriptionRunner({

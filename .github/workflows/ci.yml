@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    # 이 패키지는 경로 해석(node_modules, 플랫폼별 바이너리)과 파일시스템 동작에 민감해서,
+    # 한 OS에서만 통과하는 걸로는 부족하다. 실제로 macOS에서만 돌리다가 Windows 경로 구분자
+    # 문제를 놓칠 뻔했다.
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 의존성 `openai`가 Node 22 이상을 요구하므로 package.json의 engines도 >=22다.
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [22, 24]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 로컬에서 락파일을 만든 pnpm과 메이저를 맞춘다 — 어긋나면 --frozen-lockfile이 깨진다.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # 타입 오류는 빌드에서만 드러난다(테스트는 vitest가 트랜스파일만 한다).
+      - run: pnpm build
+
+      - run: pnpm test

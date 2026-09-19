@@ -92,3 +92,98 @@ describe('OpenAiApiRunner', () => {
     });
   });
 });
+
+describe('OpenAiApiRunner.stream', () => {
+  beforeEach(() => {
+    createMock.mockReset();
+  });
+
+  async function* fakeChunks(chunks: unknown[]) {
+    for (const chunk of chunks) yield chunk;
+  }
+
+  it('delta.content를 증분으로 내보내고 마지막 usage 청크를 done에 담는다', async () => {
+    createMock.mockResolvedValue(
+      fakeChunks([
+        { choices: [{ delta: { content: '안녕' } }] },
+        { choices: [{ delta: {} }] },
+        { choices: [{ delta: { content: '하세요' } }] },
+        { choices: [], usage: { prompt_tokens: 3, completion_tokens: 4 } },
+      ]),
+    );
+
+    const events = [];
+    for await (const event of new OpenAiApiRunner().stream({ prompt: '질문' })) events.push(event);
+
+    expect(events).toEqual([
+      { type: 'text', text: '안녕' },
+      { type: 'text', text: '하세요' },
+      {
+        type: 'done',
+        result: expect.objectContaining({
+          text: '안녕하세요',
+          usage: expect.objectContaining({ inputTokens: 3, outputTokens: 4 }),
+        }),
+      },
+    ]);
+  });
+
+  it('usage를 받으려면 stream_options.include_usage를 켜서 요청한다', async () => {
+    createMock.mockResolvedValue(fakeChunks([{ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1 } }]));
+
+    for await (const _ of new OpenAiApiRunner().stream({ prompt: '질문' })) {
+      // 소비만 한다
+    }
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({ stream: true, stream_options: { include_usage: true } }),
+    );
+  });
+
+  it('usage를 안 주는 경우에도 done은 나오고 usage만 undefined다', async () => {
+    createMock.mockResolvedValue(fakeChunks([{ choices: [{ delta: { content: 'x' } }] }]));
+
+    const events = [];
+    for await (const event of new OpenAiApiRunner().stream({ prompt: '질문' })) events.push(event);
+
+    const done = events.at(-1);
+    expect(done).toMatchObject({ type: 'done', result: { text: 'x' } });
+    expect((done as { result: { usage?: unknown } }).result.usage).toBeUndefined();
+  });
+});
+
+describe('OpenAiApiRunner.runStructured', () => {
+  beforeEach(() => {
+    createMock.mockReset();
+  });
+
+  const schema = { type: 'object', properties: { a: { type: 'number' } }, required: ['a'] };
+
+  it('response_format.json_schema로 스키마를 서버에서 강제한다 (strict)', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: '{"a":1}' } }],
+      usage: { prompt_tokens: 2, completion_tokens: 3 },
+    });
+
+    await new OpenAiApiRunner().runStructured({ prompt: '질문', schema });
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response_format: { type: 'json_schema', json_schema: { name: 'result', schema, strict: true } },
+      }),
+    );
+  });
+
+  it('반환된 JSON 문자열을 파싱해서 data로 준다', async () => {
+    createMock.mockResolvedValue({
+      choices: [{ message: { content: '{"a":42}' } }],
+      usage: { prompt_tokens: 2, completion_tokens: 3 },
+    });
+
+    const result = await new OpenAiApiRunner().runStructured<{ a: number }>({ prompt: '질문', schema });
+
+    expect(result.data).toEqual({ a: 42 });
+    expect(result.text).toBe('{"a":42}');
+    expect(result.usage).toEqual(expect.objectContaining({ inputTokens: 2, outputTokens: 3 }));
+  });
+});

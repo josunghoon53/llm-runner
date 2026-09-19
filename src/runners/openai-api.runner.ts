@@ -1,5 +1,16 @@
 import OpenAI from 'openai';
-import type { AiRunner, AiRunOptions, AiRunResult } from '../interfaces/ai-runner.interface.js';
+import type {
+  AiRunner,
+  AiRunOptions,
+  AiRunResult,
+  AiStreamEvent,
+  AiUsage,
+} from '../interfaces/ai-runner.interface.js';
+import {
+  parseJsonFromModelOutput,
+  type AiStructuredOptions,
+  type AiStructuredResult,
+} from '../structured-output.js';
 import { OPENAI_API_MODELS } from '../constants/ai-models.constants.js';
 import { isInvalidHeaderValueError, wrapWithFriendlyMessage } from '../errors/friendly-error.js';
 
@@ -40,12 +51,7 @@ export class OpenAiApiRunner implements AiRunner {
       response = await this.client.chat.completions.create({
         model: options.model ?? this.defaultModel,
         max_tokens: options.maxTokens ?? 1024,
-        messages: [
-          ...(options.system
-            ? [{ role: 'system' as const, content: options.system }]
-            : []),
-          { role: 'user' as const, content: options.prompt },
-        ],
+        messages: this.messages(options),
       });
     } catch (err) {
       throw isAuthError(err) || isInvalidHeaderValueError(err) ? wrapAuthError(err) : err;
@@ -53,6 +59,77 @@ export class OpenAiApiRunner implements AiRunner {
 
     const text = response.choices[0]?.message?.content ?? '';
 
-    return { text, raw: response };
+    return { text, usage: toUsage(response.usage), raw: response };
   }
+
+  async runStructured<T = unknown>(options: AiStructuredOptions): Promise<AiStructuredResult<T>> {
+    let response;
+    try {
+      response = await this.client.chat.completions.create({
+        model: options.model ?? this.defaultModel,
+        max_tokens: options.maxTokens ?? 1024,
+        messages: this.messages(options),
+        // OpenAI는 스키마를 서버에서 직접 강제한다 — strict를 켜면 스키마를 벗어난 출력이 아예 안 나온다.
+        response_format: {
+          type: 'json_schema',
+          json_schema: { name: options.schemaName ?? 'result', schema: options.schema, strict: true },
+        },
+      });
+    } catch (err) {
+      throw isAuthError(err) || isInvalidHeaderValueError(err) ? wrapAuthError(err) : err;
+    }
+
+    const text = response.choices[0]?.message?.content ?? '';
+    return { data: parseJsonFromModelOutput<T>(text), text, usage: toUsage(response.usage), raw: response };
+  }
+
+  private messages(options: { prompt: string; system?: string }) {
+    return [
+      ...(options.system ? [{ role: 'system' as const, content: options.system }] : []),
+      { role: 'user' as const, content: options.prompt },
+    ];
+  }
+
+  async *stream(options: AiRunOptions): AsyncIterable<AiStreamEvent> {
+    let stream;
+    try {
+      stream = await this.client.chat.completions.create({
+        model: options.model ?? this.defaultModel,
+        max_tokens: options.maxTokens ?? 1024,
+        messages: this.messages(options),
+        stream: true,
+        // 스트리밍은 기본적으로 usage를 안 주므로 명시적으로 켠다 — 마지막 청크에 담겨 온다.
+        stream_options: { include_usage: true },
+      });
+    } catch (err) {
+      throw isAuthError(err) || isInvalidHeaderValueError(err) ? wrapAuthError(err) : err;
+    }
+
+    let text = '';
+    let usage: AiUsage | undefined;
+    let lastChunk: unknown;
+
+    for await (const chunk of stream) {
+      lastChunk = chunk;
+      // usage가 실린 마지막 청크는 choices가 비어 있다.
+      if (chunk.usage) usage = toUsage(chunk.usage);
+      const delta = chunk.choices[0]?.delta?.content;
+      if (delta) {
+        text += delta;
+        yield { type: 'text', text: delta };
+      }
+    }
+
+    yield { type: 'done', result: { text, usage, raw: lastChunk } };
+  }
+}
+
+function toUsage(usage: OpenAI.CompletionUsage | undefined): AiUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    inputTokens: usage.prompt_tokens,
+    outputTokens: usage.completion_tokens,
+    cachedInputTokens: usage.prompt_tokens_details?.cached_tokens,
+    reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
+  };
 }
