@@ -19,7 +19,7 @@
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "llm-runner-setup": "./dist/bin/setup.js"
+    "llm-runner-setup": "dist/bin/setup.js"
   },
   "exports": {
     ".": {
