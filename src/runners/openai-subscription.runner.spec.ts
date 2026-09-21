@@ -637,3 +637,80 @@ describe('폴백 관측 (onFallback / activePath)', () => {
     expect(events.map((e) => e.feature)).toEqual(['stream']);
   });
 });
+
+describe('추론 강도 (reasoningEffort)', () => {
+  beforeEach(() => {
+    runMock.mockReset();
+    startThreadMock.mockClear();
+    createAppServerSessionMock.mockReset();
+  });
+
+  it('지정하면 Codex thread 옵션으로 전달한다', async () => {
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    await new OpenAiSubscriptionRunner().run({ prompt: '질문', reasoningEffort: 'none' });
+
+    expect(startThreadMock).toHaveBeenCalledWith(expect.objectContaining({ modelReasoningEffort: 'none' }));
+  });
+
+  it('지정 안 하면 키 자체를 안 보낸다 (Codex 기본값을 건드리지 않는다)', async () => {
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    await new OpenAiSubscriptionRunner().run({ prompt: '질문' });
+
+    expect(startThreadMock.mock.calls[0][0]).not.toHaveProperty('modelReasoningEffort');
+  });
+
+  it('러너 기본값을 주면 호출마다 안 넘겨도 적용된다', async () => {
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    await new OpenAiSubscriptionRunner({ defaultReasoningEffort: 'low' }).run({ prompt: '질문' });
+
+    expect(startThreadMock).toHaveBeenCalledWith(expect.objectContaining({ modelReasoningEffort: 'low' }));
+  });
+
+  it('호출 단위 지정이 러너 기본값을 이긴다', async () => {
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    await new OpenAiSubscriptionRunner({ defaultReasoningEffort: 'high' }).run({
+      prompt: '질문',
+      reasoningEffort: 'none',
+    });
+
+    expect(startThreadMock).toHaveBeenCalledWith(expect.objectContaining({ modelReasoningEffort: 'none' }));
+  });
+
+  it('runStructured()에도 적용된다', async () => {
+    runMock.mockResolvedValue({ finalResponse: '{}', usage: null });
+
+    await new OpenAiSubscriptionRunner().runStructured({
+      prompt: '질문',
+      schema: { type: 'object' },
+      reasoningEffort: 'none',
+    });
+
+    expect(startThreadMock).toHaveBeenCalledWith(expect.objectContaining({ modelReasoningEffort: 'none' }));
+  });
+
+  // 이게 핵심이다: app-server가 이 파라미터를 조용히 무시하는 걸 실제로 확인했기 때문에,
+  // 지정했는데 빠른 경로로 가면 옵션이 아무 효과 없이 사라진다.
+  it('세션에서 지정하면 빠른 경로를 쓰지 않는다 (거기선 무시되므로)', async () => {
+    runMock.mockResolvedValue({ finalResponse: 'ok' });
+
+    const session = new OpenAiSubscriptionRunner().createSession({ reasoningEffort: 'none' });
+    await session.send('질문');
+
+    expect(createAppServerSessionMock).not.toHaveBeenCalled();
+    expect(session.activePath).toBe('stable');
+    expect(startThreadMock).toHaveBeenCalledWith(expect.objectContaining({ modelReasoningEffort: 'none' }));
+  });
+
+  it('지정 안 하면 평소대로 빠른 경로를 쓴다', async () => {
+    createAppServerSessionMock.mockResolvedValue({ send: vi.fn(async () => ({ text: 'ok' })), sendStream: vi.fn(), close: vi.fn() });
+
+    const session = new OpenAiSubscriptionRunner().createSession();
+    await session.send('질문');
+
+    expect(session.activePath).toBe('fast');
+  });
+});

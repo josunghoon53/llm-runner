@@ -1,4 +1,4 @@
-import { Codex, type Thread, type Usage } from '@openai/codex-sdk';
+import { Codex, type Thread, type ThreadOptions, type Usage } from '@openai/codex-sdk';
 import type {
   AiFallbackEvent,
   AiRunner,
@@ -35,8 +35,24 @@ import {
   toUsage,
 } from './codex-session.js';
 
+/**
+ * Codex가 답하기 전에 추론에 쓰는 노력의 정도. **첫 글자까지 걸리는 시간을 좌우하는 가장 큰 변수다.**
+ *
+ * 실측(같은 프롬프트 5회씩): `'none'` 중앙 5.2초 / `'low'` 8.9초 / `'medium'` 12.1초, 지정 안 하면 11.6초.
+ * 편차도 같이 벌어져서, 지정 안 한 상태로 조금 복잡한 프롬프트를 주면 첫 글자가 40초까지 가는 걸 관측했다.
+ *
+ * 분류·추출처럼 생각할 게 별로 없는 작업이면 `'none'`이 맞고, 사람이 기다리는 챗봇이면 특히 그렇다.
+ * 반대로 코드를 짜거나 다단계 추론이 필요하면 올려야 한다 — 빨라지는 대신 품질을 포기하는 거래다.
+ *
+ * 모델마다 받는 값이 다르다(`gpt-5.6-luna` 기준 `'minimal'`은 거부되고 `'none'`이 지원된다).
+ * 지정하지 않으면 Codex 기본값을 따른다.
+ */
+export type CodexReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
 export interface OpenAiSubscriptionRunnerOptions {
   defaultModel?: string;
+  /** 기본 추론 강도. 호출마다 바꾸려면 `run({ reasoningEffort })`를 쓴다. */
+  defaultReasoningEffort?: CodexReasoningEffort;
   /**
    * `codex` 실행파일 경로를 직접 지정한다. 보통은 **지정할 필요가 없다** — PATH에 `codex`가 있으면
    * 그걸 쓰고, 없으면 프로젝트 의존성으로 설치된 `@openai/codex`의 번들 바이너리를 자동으로 찾는다.
@@ -58,6 +74,8 @@ export interface OpenAiSubscriptionRunnerOptions {
 export interface OpenAiSubscriptionSessionOptions {
   model?: string;
   enableWebSearch?: boolean;
+  /** 이 세션의 추론 강도. 챗봇처럼 사람이 기다리면 `'none'`이 체감 차이가 크다. */
+  reasoningEffort?: CodexReasoningEffort;
   /**
    * `'auto'`(기본): 프로세스를 계속 살려두는 빠른 경로(`codex app-server`)를 먼저 시도하고,
    * 그게 안 되면 공식 SDK 경로로 **자동 전환**한다. 빠른 경로가 깨져도 앱은 느려질 뿐 죽지 않는다.
@@ -85,6 +103,17 @@ const CAPACITY_FALLBACK: Record<string, string> = {
   [CODEX_MODELS.LUNA]: CODEX_MODELS.TERRA,
   [CODEX_MODELS.TERRA]: CODEX_MODELS.SOL,
 };
+
+/**
+ * 옵션에 실려온 추론 강도를 꺼낸다.
+ *
+ * 공용 인터페이스(`AiRunOptions`)에서는 느슨한 `string`으로 받는다 — 거기에 Codex 전용 유니온을
+ * 박으면 다른 provider를 쓰는 사람에게까지 Codex 개념이 새어나가기 때문이다. 대신 실제로 쓰는
+ * 여기서 좁힌다.
+ */
+function effort(options: { reasoningEffort?: string }): CodexReasoningEffort | undefined {
+  return options.reasoningEffort as CodexReasoningEffort | undefined;
+}
 
 function isCapacityError(err: unknown): boolean {
   return err instanceof Error && /at capacity/i.test(err.message);
@@ -115,11 +144,13 @@ export class OpenAiSubscriptionRunner implements AiRunner {
   private readonly codexPath: string | undefined;
   private readonly authStore: CodexAuthStore | undefined;
   private readonly onFallback: ((event: AiFallbackEvent) => void) | undefined;
+  private readonly defaultReasoningEffort: CodexReasoningEffort | undefined;
   private readyPromise: Promise<unknown> | undefined;
 
   constructor(options: OpenAiSubscriptionRunnerOptions = {}) {
     this.authStore = options.codexAuthStore;
     this.onFallback = options.onFallback;
+    this.defaultReasoningEffort = options.defaultReasoningEffort;
     // PATH의 codex → 번들 바이너리 순으로 자동 결정한다. 사용자가 경로를 직접 쓸 필요가 없다.
     this.codexPath = resolveCodexExecutable(options.codexPathOverride);
 
@@ -204,7 +235,7 @@ export class OpenAiSubscriptionRunner implements AiRunner {
   }
 
   private async runOnce(model: string, prompt: string, options: AiRunOptions): Promise<AiRunResult> {
-    const thread = this.codex.startThread(this.threadOptions(model, options.enableWebSearch));
+    const thread = this.codex.startThread(this.threadOptions(model, options.enableWebSearch, effort(options)));
     const turn = await thread.run(prompt);
     return { text: turn.finalResponse, usage: toUsage(turn.usage), raw: turn };
   }
@@ -215,7 +246,9 @@ export class OpenAiSubscriptionRunner implements AiRunner {
     const prompt = options.system ? `${options.system}\n\n${options.prompt}` : options.prompt;
 
     try {
-      const thread = this.codex.startThread(this.threadOptions(options.model ?? this.defaultModel, false));
+      const thread = this.codex.startThread(
+        this.threadOptions(options.model ?? this.defaultModel, false, effort(options)),
+      );
       const turn = await thread.run(prompt, { outputSchema: options.schema });
       return {
         data: parseJsonFromModelOutput<T>(turn.finalResponse),
@@ -281,7 +314,7 @@ export class OpenAiSubscriptionRunner implements AiRunner {
     options: AiRunOptions,
   ): AsyncIterable<AiStreamEvent> {
     try {
-      const thread = this.codex.startThread(this.threadOptions(model, options.enableWebSearch));
+      const thread = this.codex.startThread(this.threadOptions(model, options.enableWebSearch, effort(options)));
       const { events } = await thread.runStreamed(prompt);
 
       // Codex는 증분(delta)이 아니라 **매번 전체 텍스트가 담긴 item**을 다시 보낸다.
@@ -320,9 +353,21 @@ export class OpenAiSubscriptionRunner implements AiRunner {
     }
   }
 
-  private threadOptions(model: string, enableWebSearch: boolean | undefined) {
+  private threadOptions(
+    model: string,
+    enableWebSearch: boolean | undefined,
+    reasoningEffort: CodexReasoningEffort | undefined = this.defaultReasoningEffort,
+  ) {
     return {
       model,
+      // 지정 안 하면 키 자체를 안 넣어서 Codex 기본값을 그대로 둔다.
+      //
+      // 단언이 필요한 이유: SDK의 ModelReasoningEffort 타입에는 'none'이 없는데 서버는 받는다.
+      // 반대로 타입에 있는 'minimal'은 gpt-5.6-luna가 거부한다("Supported values are: 'none',
+      // 'low', ..."). 즉 SDK 타입이 실제 서버와 어긋나 있어서, 실측으로 확인한 값 집합을 쓴다.
+      ...(reasoningEffort
+        ? { modelReasoningEffort: reasoningEffort as unknown as NonNullable<ThreadOptions['modelReasoningEffort']> }
+        : {}),
       skipGitRepoCheck: true,
       // sandboxMode가 실질적인 방어선이다: read-only는 파일 쓰기/네트워크를
       // 완전히 막지만, ls/pwd 같은 읽기 명령 실행 자체는 policy와 무관하게 통과된다
@@ -348,17 +393,21 @@ export class OpenAiSubscriptionRunner implements AiRunner {
    */
   createSession(options: OpenAiSubscriptionSessionOptions = {}): AiSession {
     const model = options.model ?? this.defaultModel;
-    const useFastPath = (options.fastMode ?? 'auto') === 'auto' && !options.enableWebSearch;
+    const reasoningEffort = options.reasoningEffort ?? this.defaultReasoningEffort;
+    // 추론 강도를 지정했으면 빠른 경로를 쓰지 않는다. `codex app-server`가 이 파라미터를 받지 않고
+    // **조용히 무시**하는 걸 실제로 확인했기 때문이다(말이 안 되는 값을 보내도 통과시킨다).
+    // 지정한 옵션이 아무 효과 없이 넘어가는 것보다, 느리더라도 실제로 적용되는 경로를 쓰는 게 낫다.
+    const useFastPath =
+      (options.fastMode ?? 'auto') === 'auto' && !options.enableWebSearch && !reasoningEffort;
 
     const createStable = () =>
-      new CodexThreadSession(this.codex.startThread(this.threadOptions(model, options.enableWebSearch)));
+      new CodexThreadSession(
+        this.codex.startThread(this.threadOptions(model, options.enableWebSearch, reasoningEffort)),
+      );
 
     const createFast = async () => {
       await this.ensureReady();
-      return await createExperimentalCodexAppServerSession({
-        model,
-        codexPathOverride: this.codexPath,
-      });
+      return await createExperimentalCodexAppServerSession({ model, codexPathOverride: this.codexPath });
     };
 
     return new CodexHybridSession(createFast, createStable, useFastPath, this.onFallback);

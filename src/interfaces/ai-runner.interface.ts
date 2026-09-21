@@ -8,6 +8,12 @@ export interface AiRunOptions {
   maxTokens?: number;
   /** 구독 기반 Runner(claude-subscription, openai-subscription)에서만 적용된다. API 키 기반 Runner는 무시한다. */
   enableWebSearch?: boolean;
+  /**
+   * `openai-subscription`에서만 적용된다 — Codex가 답하기 전 추론에 쓰는 노력의 정도.
+   * **첫 글자까지 걸리는 시간을 좌우하는 가장 큰 변수다**(실측 `'none'` 5.2초 vs 기본값 11.6초).
+   * 값은 `'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'`. 자세한 건 `CodexReasoningEffort` 참고.
+   */
+  reasoningEffort?: string;
 }
 
 /**

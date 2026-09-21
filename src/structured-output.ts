@@ -9,6 +9,8 @@ export interface AiStructuredOptions {
   system?: string;
   model?: string;
   maxTokens?: number;
+  /** `openai-subscription` 전용 — Codex 추론 강도. 분류·추출이면 `'none'`이 훨씬 빠르다. */
+  reasoningEffort?: string;
   /** 원하는 출력 모양. 최상위는 `{ type: 'object', properties: {...} }` 형태를 권장한다. */
   schema: JsonSchema;
   /** 일부 provider가 스키마 이름을 요구한다. 기본값 `result`. */
