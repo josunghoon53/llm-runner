@@ -10,7 +10,6 @@ import type { AiSession } from '../interfaces/ai-session.interface.js';
 import { CLAUDE_SUBSCRIPTION_MODELS } from '../constants/ai-models.constants.js';
 import { streamFromCallback } from '../stream-bridge.js';
 import {
-  buildSchemaInstruction,
   parseJsonFromModelOutput,
   type AiStructuredOptions,
   type AiStructuredResult,
@@ -261,24 +260,39 @@ export class ClaudeSubscriptionRunner implements AiRunner {
   }
 
   /**
-   * Claude Code CLI에는 스키마를 강제하는 장치가 없다. 그래서 여기서는 프롬프트로 지시하고
-   * 결과를 파싱한다 — **다른 provider보다 실패 가능성이 높다.** 스키마가 중요한 기능이라면
-   * `claude-api`나 `openai-api`처럼 provider가 직접 강제해주는 쪽을 써라.
+   * Claude Code SDK의 `outputFormat: { type: 'json_schema' }`로 스키마를 **강제**한다.
+   * 결과는 `result` 메시지의 `structured_output` 필드에 파싱된 객체로 들어온다.
+   *
+   * 예전에는 이 경로에 강제 장치가 없는 줄 알고 프롬프트로 지시한 뒤 결과를 파싱했다.
+   * 실제로는 SDK가 정식 옵션을 갖고 있었고, 문서에 "모델의 선의에 의존한다"고 적어둔 것도
+   * 틀린 설명이었다. 지금은 네 provider 모두 provider 쪽에서 스키마를 강제한다.
    */
   async runStructured<T = unknown>(options: AiStructuredOptions): Promise<AiStructuredResult<T>> {
-    const instruction = buildSchemaInstruction(options.schema);
-    const result = await this.run({
+    const stream = query({
       prompt: options.prompt,
-      model: options.model,
-      system: options.system ? `${options.system}\n\n${instruction}` : instruction,
+      options: {
+        ...this.queryOptions({ prompt: options.prompt, system: options.system, model: options.model }, false),
+        outputFormat: { type: 'json_schema', schema: options.schema },
+      },
     });
 
-    return {
-      data: parseJsonFromModelOutput<T>(result.text),
-      text: result.text,
-      usage: result.usage,
-      raw: result.raw,
-    };
+    for await (const message of stream) {
+      if (message.type !== 'result') continue;
+      if (message.subtype !== 'success') {
+        throw new Error(`Claude Agent SDK 실행 실패: subtype=${message.subtype}`);
+      }
+      // SDK가 파싱까지 해서 structured_output에 넣어준다. 혹시 없으면 본문에서 꺼낸다
+      // (모델/CLI 버전에 따라 필드가 비어 올 가능성에 대한 방어선).
+      const structured = (message as { structured_output?: unknown }).structured_output;
+      return {
+        data: (structured ?? parseJsonFromModelOutput<T>(message.result)) as T,
+        text: message.result,
+        usage: toUsage(message),
+        raw: message,
+      };
+    }
+
+    throw new Error('Claude Agent SDK가 result 메시지 없이 스트림을 종료했다.');
   }
 
   async *stream(options: AiRunOptions): AsyncIterable<AiStreamEvent> {

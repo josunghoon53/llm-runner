@@ -81,7 +81,7 @@ npx llm-runner-setup --init   # provider 골라서 .env에 저장
 - `stream()`의 `text` 이벤트는 증분이다(전체 텍스트 아님). 마지막에 `done`이 한 번 오고 거기에 `usage`가 담긴다.
 - **여러 턴 대화(상담봇 등)라면 `session.sendStream()`을 써라.** 세션은 총 시간을 못 줄이지만 스트리밍은 빈 화면 시간을 줄인다 — 실측으로 24초 대기가 첫 글자 6초로 바뀐다. 상담봇을 `session.send()`로 만들면 매 턴 20초씩 정지된 화면을 보여주게 된다.
 - 배치/파이프라인처럼 사람이 안 기다리는 작업이면 `run()`이 더 단순하니 그대로 써라.
-- 결과를 코드로 다뤄야 하면(분류, 추출 등) 텍스트를 파싱하지 말고 `runStructured()`에 JSON Schema를 줘라. 단, **스키마를 provider가 직접 강제하는 건 `claude-api`/`openai-api`/`openai-subscription`뿐이고 `claude-subscription`은 프롬프트 지시 방식이라 실패할 수 있다** — 스키마 준수가 중요하면 provider를 바꾸라고 권해라.
+- 결과를 코드로 다뤄야 하면(분류, 추출 등) 텍스트를 파싱하지 말고 `runStructured()`에 JSON Schema를 줘라. **네 provider 모두 provider 쪽에서 스키마를 강제하므로** provider 선택과 무관하게 믿고 쓸 수 있다.
 
 ## 비개발자 사용자를 상대할 때
 

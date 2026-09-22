@@ -1,6 +1,6 @@
 {
   "name": "llm-runner",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Claude/Codex subscription 세션과 API 키를 같은 인터페이스로 감싸는 프레임워크 독립 러너",
   "license": "MIT",
   "keywords": [
@@ -54,10 +54,10 @@
     "load-test": "node scripts/load-test.mjs"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.270",
-    "@anthropic-ai/sdk": "^0.125.0",
-    "@openai/codex-sdk": "^0.154.0",
-    "openai": "^7.15.0"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.278",
+    "@anthropic-ai/sdk": "^0.127.0",
+    "@openai/codex-sdk": "^0.155.1",
+    "openai": "^7.21.0"
   },
   "devDependencies": {
     "@types/node": "^26.5.1",

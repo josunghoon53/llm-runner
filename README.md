@@ -289,14 +289,16 @@ console.log(data.score); // 0.9 — 파싱까지 끝난 값
 
 **강제 수준이 provider마다 다릅니다.** 이건 우리가 고를 수 있는 게 아니라 각 provider가 제공하는 장치의 차이입니다:
 
-| provider | 방식 | 강제 주체 |
-|---|---|---|
-| `openai-api` | `response_format: json_schema` (strict) | 서버가 강제 |
-| `claude-api` | 스키마를 입력으로 받는 도구를 강제 호출 | 서버가 강제 |
-| `openai-subscription` | Codex `outputSchema` | Codex가 강제 |
-| `claude-subscription` | 프롬프트로 지시 + 결과 파싱 | **모델의 선의** |
+| provider | 방식 |
+|---|---|
+| `openai-api` | `response_format: json_schema` (strict) |
+| `claude-api` | 스키마를 입력으로 받는 도구를 강제 호출 |
+| `openai-subscription` | Codex `outputSchema` |
+| `claude-subscription` | Agent SDK `outputFormat: json_schema` |
 
-즉 스키마 준수가 중요한 기능이라면 `claude-subscription`은 피하세요. 그 경로도 코드펜스나 앞뒤 설명이 섞여 오는 흔한 경우는 파싱해내지만, 원천 차단은 아닙니다.
+**네 provider 모두 provider 쪽에서 스키마를 강제합니다** — 프롬프트로 부탁하고 결과를 파싱하는 경로는 없습니다.
+
+> 이전 판에는 `claude-subscription`이 "모델의 선의에 의존한다"고 적혀 있었습니다. **틀린 설명이었습니다** — Agent SDK에 `outputFormat` 옵션이 있는데 제가 못 찾고 프롬프트 방식으로 구현했던 것입니다. 0.5.0에서 네이티브 방식으로 바꿨습니다.
 
 **스키마는 손대지 않고 provider에 그대로 전달됩니다.** 그래서 어떤 JSON Schema 키워드가 통하는지는 provider가 정합니다. 안전하게 쓰려면 `type` / `properties` / `items` / `required` / `enum` / `description` 정도로 제한하세요 — 이 범위는 네 provider 모두에서 확인했습니다.
 

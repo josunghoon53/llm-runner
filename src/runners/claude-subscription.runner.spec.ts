@@ -271,27 +271,42 @@ describe('ClaudeSubscriptionRunner.runStructured', () => {
     };
   }
 
-  it('스키마를 강제할 장치가 없으므로 system 지시문으로 넣는다', async () => {
+  it('SDK의 outputFormat으로 스키마를 강제한다 (프롬프트로 부탁하지 않는다)', async () => {
     queryMock.mockReturnValue(resultStream('{"a":1}'));
 
     await new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema });
 
-    const passedSystem = queryMock.mock.calls[0][0].options.systemPrompt as string;
-    expect(passedSystem).toContain('JSON Schema');
-    expect(passedSystem).toContain('"type": "object"');
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({ outputFormat: { type: 'json_schema', schema } }),
+      }),
+    );
   });
 
-  it('호출자가 준 system이 있으면 지시문을 뒤에 덧붙인다 (원래 지시를 덮지 않는다)', async () => {
-    queryMock.mockReturnValue(resultStream('{"a":1}'));
+  it('SDK가 파싱해준 structured_output을 그대로 쓴다', async () => {
+    const stream = resultStream('{"a":42}');
+    // 실제 SDK는 result 메시지에 파싱된 객체를 함께 실어준다.
+    queryMock.mockReturnValue({
+      close: stream.close,
+      [Symbol.asyncIterator]: async function* () {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          result: '{"a":42}',
+          structured_output: { a: 42 },
+          total_cost_usd: 0.01,
+          modelUsage: {},
+        };
+      },
+    });
 
-    await new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema, system: '너는 분석가다' });
+    const result = await new ClaudeSubscriptionRunner().runStructured<{ a: number }>({ prompt: '질문', schema });
 
-    const passedSystem = queryMock.mock.calls[0][0].options.systemPrompt as string;
-    expect(passedSystem.startsWith('너는 분석가다')).toBe(true);
-    expect(passedSystem).toContain('JSON Schema');
+    expect(result.data).toEqual({ a: 42 });
   });
 
-  it('코드펜스를 붙여서 답해도 파싱해낸다 (지시해도 붙이는 경우가 있다)', async () => {
+  // structured_output이 비어 오는 경우를 대비한 방어선이 실제로 동작하는지 본다.
+  it('structured_output이 없으면 본문에서 JSON을 꺼내 쓴다', async () => {
     queryMock.mockReturnValue(resultStream('```json\n{"a":42}\n```'));
 
     const result = await new ClaudeSubscriptionRunner().runStructured<{ a: number }>({ prompt: '질문', schema });
@@ -299,7 +314,7 @@ describe('ClaudeSubscriptionRunner.runStructured', () => {
     expect(result.data).toEqual({ a: 42 });
   });
 
-  it('JSON이 아예 없으면 다른 provider를 권하는 에러를 던진다', async () => {
+  it('structured_output도 없고 본문도 JSON이 아니면 에러를 던진다', async () => {
     queryMock.mockReturnValue(resultStream('죄송하지만 못하겠습니다'));
 
     await expect(new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema })).rejects.toThrow(
