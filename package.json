@@ -1,6 +1,6 @@
 {
   "name": "llm-runner",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Claude/Codex subscription 세션과 API 키를 같은 인터페이스로 감싸는 프레임워크 독립 러너",
   "license": "MIT",
   "keywords": [
