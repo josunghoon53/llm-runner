@@ -9,8 +9,23 @@ export interface AiStructuredOptions {
   system?: string;
   model?: string;
   maxTokens?: number;
-  /** `openai-subscription` 전용 — Codex 추론 강도. 분류·추출이면 `'none'`이 훨씬 빠르다. */
+  /**
+   * `openai-subscription` 전용 — Codex 추론 강도.
+   *
+   * 실측(2026-09-24, 짧은 단발 작업 442회): 이런 작업에서는 강도를 내려도 시간이 1~9%밖에
+   * 안 줄어든다. 대신 다단계 계산은 `'none'`에서 12회 중 0회 정답으로 무너졌다.
+   * 시간이 실제로 크게 줄어드는 건 웹 검색처럼 원래 오래 걸리는 작업이다(실측 30~48%).
+   * 자세한 기준은 README의 `reasoningEffort` 절 참고.
+   */
   reasoningEffort?: string;
+  /**
+   * 웹 검색 허용 여부. 지정하지 않으면 꺼진 상태로 돈다.
+   *
+   * 0.5.1까지는 이 필드가 없어서 `runStructured()`만 검색을 **조용히** 못 썼다 —
+   * 호출부에서 넘겨도 타입 에러 없이 무시됐고, 모델은 "웹 검색 도구가 제공되지 않아"라고
+   * 답했으며, 스키마는 그대로 통과해서 호출한 쪽은 검색이 된 줄 알았다(실측으로 재현).
+   */
+  enableWebSearch?: boolean;
   /** 원하는 출력 모양. 최상위는 `{ type: 'object', properties: {...} }` 형태를 권장한다. */
   schema: JsonSchema;
   /** 일부 provider가 스키마 이름을 요구한다. 기본값 `result`. */

@@ -271,7 +271,15 @@ export class ClaudeSubscriptionRunner implements AiRunner {
     const stream = query({
       prompt: options.prompt,
       options: {
-        ...this.queryOptions({ prompt: options.prompt, system: options.system, model: options.model }, false),
+        ...this.queryOptions(
+          {
+            prompt: options.prompt,
+            system: options.system,
+            model: options.model,
+            enableWebSearch: options.enableWebSearch,
+          },
+          false,
+        ),
         outputFormat: { type: 'json_schema', schema: options.schema },
       },
     });

@@ -424,6 +424,29 @@ describe('OpenAiSubscriptionRunner.runStructured', () => {
     expect(runMock).toHaveBeenCalledWith('질문', { outputSchema: schema });
   });
 
+  // 0.5.1까지 여기서 웹 검색이 false로 하드코딩돼 있었다. 넘겨도 타입 에러 없이 무시됐고,
+  // 모델은 "웹 검색 도구가 제공되지 않아"라고 답했으며, 스키마는 그대로 통과했다.
+  // 호출한 쪽에서는 검색이 된 줄 알게 되는 조용한 실패라 반드시 막는다.
+  it('enableWebSearch를 thread 옵션까지 전달한다', async () => {
+    runMock.mockResolvedValue({ finalResponse: '{"a":1}', usage: null });
+
+    await new OpenAiSubscriptionRunner().runStructured({ prompt: '질문', schema, enableWebSearch: true });
+
+    expect(startThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ networkAccessEnabled: true, webSearchEnabled: true, webSearchMode: 'live' }),
+    );
+  });
+
+  it('enableWebSearch를 안 주면 검색은 꺼진 채로 돈다', async () => {
+    runMock.mockResolvedValue({ finalResponse: '{"a":1}', usage: null });
+
+    await new OpenAiSubscriptionRunner().runStructured({ prompt: '질문', schema });
+
+    expect(startThreadMock).toHaveBeenCalledWith(
+      expect.objectContaining({ webSearchEnabled: false, webSearchMode: 'disabled' }),
+    );
+  });
+
   it('응답을 파싱해서 data로 주고 사용량도 담는다', async () => {
     runMock.mockResolvedValue({
       finalResponse: '{"a":42}',

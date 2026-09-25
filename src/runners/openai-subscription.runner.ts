@@ -247,7 +247,7 @@ export class OpenAiSubscriptionRunner implements AiRunner {
 
     try {
       const thread = this.codex.startThread(
-        this.threadOptions(options.model ?? this.defaultModel, false, effort(options)),
+        this.threadOptions(options.model ?? this.defaultModel, options.enableWebSearch, effort(options)),
       );
       const turn = await thread.run(prompt, { outputSchema: options.schema });
       return {

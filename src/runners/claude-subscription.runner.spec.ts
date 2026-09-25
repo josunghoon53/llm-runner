@@ -283,6 +283,27 @@ describe('ClaudeSubscriptionRunner.runStructured', () => {
     );
   });
 
+  // 0.5.1까지 runStructured만 enableWebSearch를 queryOptions로 넘기지 않아 검색이 조용히 꺼졌다.
+  it('enableWebSearch를 allowedTools까지 전달한다', async () => {
+    queryMock.mockReturnValue(resultStream('{"a":1}'));
+
+    await new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema, enableWebSearch: true });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ options: expect.objectContaining({ allowedTools: ['WebSearch'] }) }),
+    );
+  });
+
+  it('enableWebSearch를 안 주면 도구를 전부 막는다', async () => {
+    queryMock.mockReturnValue(resultStream('{"a":1}'));
+
+    await new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema });
+
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.objectContaining({ options: expect.objectContaining({ allowedTools: [] }) }),
+    );
+  });
+
   it('SDK가 파싱해준 structured_output을 그대로 쓴다', async () => {
     const stream = resultStream('{"a":42}');
     // 실제 SDK는 result 메시지에 파싱된 객체를 함께 실어준다.
