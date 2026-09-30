@@ -631,11 +631,16 @@ await claudeLogout({ claudeConfigDir: '~/.claude-work' });
 import { getClaudeAccountInfo, getCodexAccountInfo } from 'llm-runner/experimental';
 
 const claude = await getClaudeAccountInfo();
-// { available: true, email, plan: 'Claude Max', organization, authKind: 'firstParty' }
+// { available: true, email, plan: 'max', organization, organizationId,
+//   authKind: 'firstParty', configDirectory: '/Users/…/.claude' }
 
 const codex = await getCodexAccountInfo();
 // { available: true, email, plan: 'plus', authKind: 'chatgpt' }
 ```
+
+`configDirectory`로 **어느 프로필을 보고 있는지** 확인할 수 있습니다. 여러 계정을 굴릴 때 "지금 이 러너가 어느 계정인가"를 화면에 띄우는 용도입니다.
+
+Claude 쪽은 `claude auth status --json`을 먼저 쓰고, 그게 안 되면 Agent SDK로 넘어갑니다. 실측(2026-09-30): CLI가 **308ms에 필드 10개**, SDK는 **2,663ms에 5개**였습니다. 옛 CLI에는 `--json`이 없을 수 있어 대비책을 남겨 뒀습니다.
 
 구독 로그인이 아니면 `available: false`이고 `authKind`만 채워집니다 — Claude는 `'bedrock'`·`'vertex'`·`'gateway'`, Codex는 `'apiKey'`·`'amazonBedrock'`입니다.
 

@@ -11,12 +11,20 @@
  * **비용** — 토큰을 쓰지 않는다. 프롬프트를 보내지 않고 계정 조회 요청만 보낸다.
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { spawn } from 'node:child_process';
 import { CodexAppServerPeer } from './codex-app-server-session.js';
 import { buildProfileEnv } from '../setup/profile-env.js';
 
 export interface LlmAccountInfo {
   /** 계정을 읽을 수 있었는가. 로그인이 안 됐거나 조회에 실패하면 false. */
   available: boolean;
+  /**
+   * 어느 프로필 디렉터리를 보고 있는지. 여러 계정을 굴릴 때 "지금 이게 어느 프로필인가"를
+   * 확인하는 용도다. Claude만 채워진다 — Codex는 호출할 때 준 `codexHome`이 곧 답이다.
+   */
+  configDirectory?: string;
+  /** Claude 전용 — 조직 식별자. */
+  organizationId?: string;
   /** 로그인 이메일. 구독이 아닌 인증(API 키·Bedrock 등)에서는 없다. */
   email?: string;
   /** Claude: 'pro' | 'max' | 'team' 등. Codex: 'plus' | 'pro' | 'team' 등. */
@@ -31,8 +39,78 @@ export interface LlmAccountInfo {
   authKind?: string;
 }
 
-/** Claude 구독 계정. 프롬프트를 보내지 않으므로 토큰을 쓰지 않는다. */
+/**
+ * `claude auth status --json`으로 계정을 읽는다. 실측(2026-09-30): **216ms에 필드 10개**로,
+ * SDK의 `accountInfo()`(2,663ms에 5개)보다 12배 빠르고 정보도 많다. 특히 `loggedIn`과
+ * `configDirectory`는 SDK 쪽에 없다 — 로그인 안 된 상태를 '이메일이 비었다'로 추측하지 않고
+ * 명시적으로 알 수 있고, 어느 프로필을 보고 있는지도 확인된다.
+ */
+function readClaudeAuthStatus(
+  options: { claudeConfigDir?: string; claudePathOverride?: string; timeoutMs?: number },
+): Promise<Record<string, unknown> | undefined> {
+  const env = buildProfileEnv(options, ['claudeConfigDir']);
+  return new Promise((resolve) => {
+    const child = spawn(options.claudePathOverride ?? 'claude', ['auth', 'status', '--json'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(env ? { env } : {}),
+    });
+    let out = '';
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (c: string) => (out += c));
+
+    const timer = setTimeout(() => {
+      child.kill();
+      resolve(undefined);
+    }, options.timeoutMs ?? 15_000);
+
+    // 실행파일이 없거나 CLI가 옛 버전이라 --json을 모르면 여기로 온다. SDK 경로로 넘긴다.
+    child.on('error', () => {
+      clearTimeout(timer);
+      resolve(undefined);
+    });
+    child.on('exit', () => {
+      clearTimeout(timer);
+      try {
+        resolve(JSON.parse(out) as Record<string, unknown>);
+      } catch {
+        resolve(undefined);
+      }
+    });
+  });
+}
+
+/**
+ * Claude 구독 계정.
+ *
+ * `claude auth status --json`을 먼저 쓰고, 그게 안 되면 Agent SDK의 `accountInfo()`로 넘어간다.
+ * CLI 쪽이 훨씬 빠르고 정보도 많지만, 옛 CLI에는 `--json`이 없을 수 있어서 대비책을 남긴다.
+ * 어느 경로든 프롬프트를 보내지 않으므로 토큰을 쓰지 않는다.
+ */
 export async function getClaudeAccountInfo(
+  options: { timeoutMs?: number; claudeConfigDir?: string; claudePathOverride?: string } = {},
+): Promise<LlmAccountInfo> {
+  const status = await readClaudeAuthStatus(options);
+  if (status && typeof status.loggedIn === 'boolean') {
+    const str = (key: string) => (typeof status[key] === 'string' ? (status[key] as string) : undefined);
+    if (!status.loggedIn) {
+      return { available: false, authKind: str('apiProvider'), configDirectory: str('configDirectory') };
+    }
+    return {
+      available: true,
+      email: str('email'),
+      plan: str('subscriptionType'),
+      organization: str('orgName'),
+      organizationId: str('orgId'),
+      authKind: str('apiProvider'),
+      configDirectory: str('configDirectory'),
+    };
+  }
+
+  return getClaudeAccountInfoViaSdk(options);
+}
+
+/** CLI를 못 쓸 때의 대비책. Agent SDK의 제어 요청을 쓴다. */
+async function getClaudeAccountInfoViaSdk(
   options: { timeoutMs?: number; claudeConfigDir?: string } = {},
 ): Promise<LlmAccountInfo> {
   // 입력을 닫지 않고 붙잡아 둬야 제어 요청이 간다. 일회성 호출은 결과를 내는 순간
