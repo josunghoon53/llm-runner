@@ -493,6 +493,62 @@ session.close();
 
 ⚠️ 이 경로는 폴백이 없으므로 **OpenAI가 프로토콜을 바꾸면 그대로 실패한다.** 특별한 이유가 없다면 `createSession()`을 써라. 10턴 연속 실행, 실무형 긴 프롬프트, 요청/턴 타임아웃, 프로세스 실행 실패 시 즉시 에러 처리까지 실제로 검증했다.
 
+### 구독 플랜이 얼마나 남았는지 — `getClaudePlanUsage()`
+
+터미널에서 `/usage`를 쳤을 때 보는 값을 코드로 읽습니다. **토큰을 쓰지 않습니다** — 프롬프트를 보내지 않고 제어 요청만 보내기 때문입니다(실측: 세션 비용 $0, 약 2~4초).
+
+```ts
+import { getClaudePlanUsage } from 'llm-runner/experimental';
+
+const usage = await getClaudePlanUsage();
+if (usage.available) {
+  console.log(usage.subscriptionType);                 // 'max'
+  console.log(usage.fiveHour?.remainingPercent);       // 86
+  console.log(usage.sevenDay?.remainingPercent);       // 73
+  console.log(usage.fiveHour?.resetsAt);               // Date
+}
+```
+
+배치를 돌리기 전에 남은 양을 보고 멈출지 정하는 식으로 쓸 수 있습니다.
+
+```ts
+const { fiveHour } = await getClaudePlanUsage();
+if ((fiveHour?.remainingPercent ?? 100) < 10) {
+  throw new Error('5시간 한도가 10% 미만이라 배치를 시작하지 않습니다.');
+}
+```
+
+⚠️ **`AiRunner` 인터페이스에 없는 이유**가 셋입니다.
+
+- **Claude 구독에서만 됩니다.** Codex SDK에는 한도·잔량 관련 타입이 아예 없고, API 키·Bedrock·Vertex는 플랜 한도 개념이 없어 `available: false`로 옵니다.
+- SDK가 이 기능을 `usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()`라는 이름으로 내놨고, **"안정화되면 이름이 바뀐다"**고 문서에 적어뒀습니다. 이름이 바뀌면 이 함수는 던지지 않고 `available: false`를 돌려줍니다.
+- 응답에 **타입 정의에 없는 창이 섞여 옵니다**(실측: `iguana_necktie`, `nimbus_quill`). 알려진 `fiveHour`/`sevenDay`만 따로 담고 나머지는 `others`에 넘기니, 표시 용도로만 쓰고 구조에 의존하지 마세요.
+
+Codex 구독도 같은 모양으로 읽을 수 있습니다.
+
+```ts
+import { getCodexPlanUsage } from 'llm-runner/experimental';
+
+const usage = await getCodexPlanUsage();
+if (usage.available) {
+  console.log(usage.planType);                       // 'plus'
+  console.log(usage.primary?.remainingPercent);      // 100   (창 길이 300분)
+  console.log(usage.secondary?.remainingPercent);    // 100   (창 길이 10080분)
+  console.log(usage.credits);                        // { hasCredits: false, unlimited: false, balance: '0' }
+}
+```
+
+공식 `@openai/codex-sdk`에는 한도 관련 타입이 없습니다. 대신 `codex app-server`의 `account/rateLimits/read`를 직접 부릅니다 — `createSession()`이 이미 쓰고 있는 채널이라 새로 붙이는 의존성은 없습니다. 이쪽도 **토큰을 쓰지 않습니다.**
+
+⚠️ `ordinaryUsageAllowed`가 `null`이면 **알 수 없음**입니다. 프로토콜 주석이 못 박습니다 — *"퍼센트나 리셋 시각으로 회복을 추론하면 안 된다."*
+
+| | Claude 구독 | Codex 구독 |
+|---|---|---|
+| 호출당 토큰 | ✅ | ✅ |
+| 호출당 금액 | ✅ `costUsd` | ❌ (Codex가 안 줌) |
+| 플랜 잔량 | ✅ `getClaudePlanUsage()` | ✅ `getCodexPlanUsage()` |
+| 크레딧 잔액 | — | ✅ |
+
 ## 대량 배치로 돌릴 때 (수십~수백 건 처리)
 
 문서를 수백 건 분석하는 배치를 만든다면, **세션은 답이 아닙니다.** 각 건이 서로 독립적이어야 하니 세션으로 묶으면 안 되고(맥락이 섞임), `run()`을 순서대로 부르면 건당 5~6초가 그대로 쌓입니다.

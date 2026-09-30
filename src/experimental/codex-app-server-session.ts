@@ -48,7 +48,7 @@ export interface CodexAppServerSessionOptions {
  * 필요한 만큼만 구현했다: initialize 핸드셰이크, thread/start, turn/start, 완료 대기,
  * 그리고 (읽기전용 sandbox라 거의 안 오지만) 도구 승인 요청은 전부 거절한다.
  */
-class CodexAppServerPeer {
+export class CodexAppServerPeer {
   private readonly child: ChildProcessWithoutNullStreams;
   private nextId = 1;
   private readonly pending = new Map<
