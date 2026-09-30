@@ -549,6 +549,26 @@ if (usage.available) {
 | 플랜 잔량 | ✅ `getClaudePlanUsage()` | ✅ `getCodexPlanUsage()` |
 | 크레딧 잔액 | — | ✅ |
 
+### 어느 계정으로 돌고 있는지 — `getClaudeAccountInfo()` / `getCodexAccountInfo()`
+
+두 provider가 **서로 다른 계정**으로 로그인돼 있을 수 있습니다. 의도한 구독을 쓰고 있는지 확인할 때 씁니다.
+
+```ts
+import { getClaudeAccountInfo, getCodexAccountInfo } from 'llm-runner/experimental';
+
+const claude = await getClaudeAccountInfo();
+// { available: true, email, plan: 'Claude Max', organization, authKind: 'firstParty' }
+
+const codex = await getCodexAccountInfo();
+// { available: true, email, plan: 'plus', authKind: 'chatgpt' }
+```
+
+구독 로그인이 아니면 `available: false`이고 `authKind`만 채워집니다 — Claude는 `'bedrock'`·`'vertex'`·`'gateway'`, Codex는 `'apiKey'`·`'amazonBedrock'`입니다.
+
+⚠️ **이메일은 개인정보입니다.** 로컬 로그인 세션에서 읽어오는 값이니 서버로 보내거나 로그에 남기지 마세요. 화면에 띄운다면 로그인한 본인에게만 보여주는 게 맞습니다. 이 함수들은 **자격 증명 자체(토큰·키)는 읽지 않습니다** — SDK와 CLI가 알아서 씁니다.
+
+이쪽도 **토큰을 쓰지 않습니다.**
+
 ## 대량 배치로 돌릴 때 (수십~수백 건 처리)
 
 문서를 수백 건 분석하는 배치를 만든다면, **세션은 답이 아닙니다.** 각 건이 서로 독립적이어야 하니 세션으로 묶으면 안 되고(맥락이 섞임), `run()`을 순서대로 부르면 건당 5~6초가 그대로 쌓입니다.
