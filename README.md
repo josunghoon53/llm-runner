@@ -582,6 +582,47 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
 
 > **왜 라이브러리가 감싸는가** — 두 SDK 모두 `env`를 주면 `process.env`를 병합이 아니라 **통째로 교체**합니다(Codex: *"will not inherit variables from process.env"*, Claude: *"REPLACES the subprocess environment entirely"*). 직접 `env: { CODEX_HOME: x }`만 넘기면 `PATH`·`HOME`까지 날아가 "바이너리를 못 찾는다"는 엉뚱한 오류가 납니다. llm-runner가 병합해서 넘깁니다.
 
+### 프로필에 로그인하기 — `startCodexLogin()` / `startClaudeLogin()`
+
+두 provider의 흐름이 다릅니다. **브라우저는 호출부가 엽니다** — 서버·CI처럼 브라우저가 없는 환경도 있어서, 이 함수들은 URL만 넘깁니다.
+
+**Codex** — 프로토콜이 URL을 주고, 승인이 끝나면 알림이 옵니다.
+
+```ts
+import { startCodexLogin } from 'llm-runner/experimental';
+
+const login = await startCodexLogin({ codexHome: '~/.codex-work' });
+console.log('브라우저에서 열어주세요:', login.authUrl);
+
+const { success, error } = await login.waitForCompletion();   // 기본 5분 대기
+// 도중에 그만두려면: await login.cancel();
+```
+
+**Claude** — SDK에 로그인 API가 없어 `claude auth login` CLI를 씁니다. 그 CLI는 **인증 코드를 붙여넣기를 기다리므로** 한 단계가 더 있습니다.
+
+```ts
+import { startClaudeLogin } from 'llm-runner/experimental';
+
+const login = await startClaudeLogin({ claudeConfigDir: '~/.claude-work' });
+console.log('브라우저에서 승인하세요:', login.authUrl);
+
+login.submitCode(코드);                        // 사용자가 받은 코드를 넣는다
+const { success } = await login.waitForCompletion();
+```
+
+> CLI가 **스스로 브라우저를 열려고 시도한 뒤**입니다("Opening browser to sign in…"). `authUrl`은 그게 실패했거나 다른 브라우저로 열고 싶을 때 씁니다.
+
+로그아웃도 프로필 단위입니다.
+
+```ts
+await codexLogout({ codexHome: '~/.codex-work' });
+await claudeLogout({ claudeConfigDir: '~/.claude-work' });
+```
+
+⚠️ **프로필을 생략하면 머신 기본 계정에서 로그아웃합니다.** 다른 터미널에서 쓰던 세션까지 끊기고, 되돌리려면 브라우저로 다시 로그인해야 합니다. 프로필을 지정해서 쓰세요.
+
+모든 함수가 실패해도 던지지 않고 `{ success: false, error }` 또는 `{ ok: false, error }`를 돌려줍니다 — 로그인 실패로 앱이 죽으면 안 되니까요. 단 `start*`는 URL조차 못 얻은 경우(실행파일 없음, 응답 형식 변경)에만 던집니다.
+
 ### 어느 계정으로 돌고 있는지 — `getClaudeAccountInfo()` / `getCodexAccountInfo()`
 
 두 provider가 **서로 다른 계정**으로 로그인돼 있을 수 있습니다. 의도한 구독을 쓰고 있는지 확인할 때 씁니다.

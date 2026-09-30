@@ -22,3 +22,15 @@ export {
   getCodexAccountInfo,
   type LlmAccountInfo,
 } from './account-info.js';
+export {
+  startCodexLogin,
+  codexLogout,
+  type CodexLoginOptions,
+  type CodexLoginHandle,
+} from './codex-login.js';
+export {
+  startClaudeLogin,
+  claudeLogout,
+  type ClaudeLoginOptions,
+  type ClaudeLoginHandle,
+} from './claude-login.js';
