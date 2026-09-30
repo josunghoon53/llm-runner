@@ -243,3 +243,78 @@ describe('codex app-server 세션의 사용량(usage) 수집', () => {
     session.close();
   });
 });
+
+describe('구독 한도 알림 (onRateLimits)', () => {
+  beforeEach(() => spawnMock.mockReset());
+
+  /** 세션을 열고 initialize 응답까지 마친 상태를 만든다. */
+  async function openSession(onRateLimits?: (u: unknown) => void) {
+    const { child, stdout } = createFakeCodexAppServerProcess();
+    spawnMock.mockReturnValue(child);
+    const promise = createExperimentalCodexAppServerSession({
+      onRateLimits: onRateLimits as never,
+    });
+    await new Promise((r) => setImmediate(r));
+    respondLine(stdout, { id: 1, result: {} });
+    const session = await promise;
+    return { session, stdout };
+  }
+
+  // 실측: 턴 하나에 3회 흐른다. 폴링 없이 배치 중 한도를 지켜보려는 게 이 기능의 목적이다.
+  it('알림을 CodexPlanUsage로 정규화해 넘긴다', async () => {
+    const seen: Array<Record<string, unknown>> = [];
+    const { stdout } = await openSession((u) => seen.push(u as Record<string, unknown>));
+
+    respondLine(stdout, {
+      method: 'account/rateLimits/updated',
+      params: {
+        rateLimits: {
+          planType: 'plus',
+          primary: { usedPercent: 5, windowDurationMins: 300, resetsAt: 1790786057 },
+          secondary: { usedPercent: 1, windowDurationMins: 10080, resetsAt: 1791189096 },
+          credits: { hasCredits: false, unlimited: false, balance: '0' },
+        },
+      },
+    });
+    await new Promise((r) => setImmediate(r));
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      available: true,
+      planType: 'plus',
+      primary: { usedPercent: 5, remainingPercent: 95, windowMinutes: 300 },
+      secondary: { usedPercent: 1, remainingPercent: 99 },
+    });
+  });
+
+  it('콜백을 안 주면 아무것도 하지 않는다', async () => {
+    const { stdout } = await openSession();
+
+    // 던지지 않고 조용히 지나가야 한다.
+    respondLine(stdout, { method: 'account/rateLimits/updated', params: { rateLimits: { planType: 'plus' } } });
+    await new Promise((r) => setImmediate(r));
+  });
+
+  // 알림 콜백이 터져도 진행 중인 턴이 깨지면 안 된다.
+  it('콜백이 던져도 삼킨다', async () => {
+    const { stdout } = await openSession(() => {
+      throw new Error('호출부 버그');
+    });
+
+    respondLine(stdout, {
+      method: 'account/rateLimits/updated',
+      params: { rateLimits: { planType: 'plus', primary: { usedPercent: 1 } } },
+    });
+    await new Promise((r) => setImmediate(r));
+  });
+
+  it('rateLimits가 비어 오면 호출하지 않는다', async () => {
+    const seen: unknown[] = [];
+    const { stdout } = await openSession((u) => seen.push(u));
+
+    respondLine(stdout, { method: 'account/rateLimits/updated', params: { rateLimits: null } });
+    await new Promise((r) => setImmediate(r));
+
+    expect(seen).toHaveLength(0);
+  });
+});

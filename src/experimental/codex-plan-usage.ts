@@ -42,9 +42,9 @@ export interface CodexPlanUsage {
   ordinaryUsageAllowed?: boolean;
 }
 
-type RawWindow = { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
+export type RawCodexWindow = { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null;
 
-function toWindow(raw: RawWindow): CodexPlanWindow | undefined {
+function toWindow(raw: RawCodexWindow): CodexPlanWindow | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const used = typeof raw.usedPercent === 'number' ? raw.usedPercent : undefined;
   return {
@@ -79,33 +79,50 @@ export async function getCodexPlanUsage(
       ordinaryUsageAllowed?: boolean | null;
       rateLimits?: {
         planType?: string | null;
-        primary?: RawWindow;
-        secondary?: RawWindow;
+        primary?: RawCodexWindow;
+        secondary?: RawCodexWindow;
         credits?: { hasCredits: boolean; unlimited: boolean; balance?: string | null } | null;
       } | null;
     }>('account/rateLimits/read', { excludeResetCreditDetails: true });
 
     const limits = raw?.rateLimits;
     if (!limits) return { available: false };
-
-    return {
-      available: true,
-      planType: limits.planType ?? undefined,
-      primary: toWindow(limits.primary ?? null),
-      secondary: toWindow(limits.secondary ?? null),
-      credits: limits.credits
-        ? {
-            hasCredits: limits.credits.hasCredits,
-            unlimited: limits.credits.unlimited,
-            balance: limits.credits.balance ?? undefined,
-          }
-        : undefined,
-      ordinaryUsageAllowed: raw.ordinaryUsageAllowed ?? undefined,
-    };
+    return toPlanUsage(limits, raw.ordinaryUsageAllowed ?? undefined);
   } catch {
     // 잔량 조회는 부가 기능이다. 실패로 호출한 쪽 흐름을 끊지 않는다.
     return { available: false };
   } finally {
     peer.close();
   }
+}
+
+/**
+ * `RateLimitSnapshot` 하나를 `CodexPlanUsage`로 바꾼다.
+ *
+ * 조회(`account/rateLimits/read`)와 알림(`account/rateLimits/updated`)이 같은 스냅샷 구조를
+ * 쓰므로 한 곳에서 처리한다 — 두 군데로 나뉘면 한쪽만 고치는 일이 생긴다.
+ */
+export function toPlanUsage(
+  limits: {
+    planType?: string | null;
+    primary?: RawCodexWindow;
+    secondary?: RawCodexWindow;
+    credits?: { hasCredits: boolean; unlimited: boolean; balance?: string | null } | null;
+  },
+  ordinaryUsageAllowed?: boolean,
+): CodexPlanUsage {
+  return {
+    available: true,
+    planType: limits.planType ?? undefined,
+    primary: toWindow(limits.primary ?? null),
+    secondary: toWindow(limits.secondary ?? null),
+    credits: limits.credits
+      ? {
+          hasCredits: limits.credits.hasCredits,
+          unlimited: limits.credits.unlimited,
+          balance: limits.credits.balance ?? undefined,
+        }
+      : undefined,
+    ordinaryUsageAllowed,
+  };
 }

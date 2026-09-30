@@ -582,6 +582,29 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
 
 > **왜 라이브러리가 감싸는가** — 두 SDK 모두 `env`를 주면 `process.env`를 병합이 아니라 **통째로 교체**합니다(Codex: *"will not inherit variables from process.env"*, Claude: *"REPLACES the subprocess environment entirely"*). 직접 `env: { CODEX_HOME: x }`만 넘기면 `PATH`·`HOME`까지 날아가 "바이너리를 못 찾는다"는 엉뚱한 오류가 납니다. llm-runner가 병합해서 넘깁니다.
 
+### 한도가 차오르는 걸 실시간으로 — `onRateLimits`
+
+`getCodexPlanUsage()`는 물어봐야 답합니다. 긴 배치를 돌리는 중에는 **서버가 알아서 밀어 주는** 쪽이 낫습니다.
+
+```ts
+const runner = createAiRunner({
+  provider: 'openai-subscription',
+  onRateLimits: (usage) => {
+    if ((usage.primary?.remainingPercent ?? 100) < 5) 배치를_멈춘다();
+  },
+});
+```
+
+폴링이 아닙니다 — 턴이 도는 동안 서버가 갱신값을 보냅니다(실측: 턴 하나에 3회, 2턴에 2회 수신). `getCodexPlanUsage()`와 **같은 `CodexPlanUsage` 모양**으로 정규화해서 넘깁니다.
+
+빠른 경로(app-server)에서만 흐릅니다. 웹 검색을 켜거나 `reasoningEffort`를 지정하면 안정 경로를 쓰므로 알림이 오지 않습니다. 콜백에서 던진 예외는 삼킵니다 — 알림 때문에 진행 중인 턴이 깨지면 안 되니까요.
+
+`llm-runner/experimental`의 세션에도 같은 옵션이 있습니다.
+
+```ts
+await createExperimentalCodexAppServerSession({ onRateLimits: (u) => … });
+```
+
 ### 이미지 생성 — `generateCodexImage()`
 
 ```ts

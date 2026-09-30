@@ -18,6 +18,7 @@ import {
 } from '../setup/restore-session.js';
 import { resolveCodexExecutable } from '../setup/resolve-codex-binary.js';
 import { buildProfileEnv, toStringEnv, type ProfileOptions } from '../setup/profile-env.js';
+import type { CodexPlanUsage } from '../experimental/codex-plan-usage.js';
 import {
   parseJsonFromModelOutput,
   type AiStructuredOptions,
@@ -54,6 +55,11 @@ export interface OpenAiSubscriptionRunnerOptions extends ProfileOptions {
   defaultModel?: string;
   /** 기본 추론 강도. 호출마다 바꾸려면 `run({ reasoningEffort })`를 쓴다. */
   defaultReasoningEffort?: CodexReasoningEffort;
+  /**
+   * 구독 한도가 갱신될 때마다 호출된다. 빠른 경로(app-server)에서만 흐른다 —
+   * 서버가 턴 도중에 밀어 주므로 폴링이 필요 없다. 긴 배치에서 한도를 지켜볼 때 쓴다.
+   */
+  onRateLimits?: (usage: CodexPlanUsage) => void;
   /**
    * `codex` 실행파일 경로를 직접 지정한다. 보통은 **지정할 필요가 없다** — PATH에 `codex`가 있으면
    * 그걸 쓰고, 없으면 프로젝트 의존성으로 설치된 `@openai/codex`의 번들 바이너리를 자동으로 찾는다.
@@ -145,12 +151,17 @@ export class OpenAiSubscriptionRunner implements AiRunner {
   private readonly codexPath: string | undefined;
   private readonly authStore: CodexAuthStore | undefined;
   private readonly onFallback: ((event: AiFallbackEvent) => void) | undefined;
+  private readonly onRateLimits: ((usage: CodexPlanUsage) => void) | undefined;
+  /** 빠른 경로 세션에도 같은 프로필을 물려주려면 보관해야 한다. */
+  private readonly codexHome: string | undefined;
   private readonly defaultReasoningEffort: CodexReasoningEffort | undefined;
   private readyPromise: Promise<unknown> | undefined;
 
   constructor(options: OpenAiSubscriptionRunnerOptions = {}) {
     this.authStore = options.codexAuthStore;
     this.onFallback = options.onFallback;
+    this.onRateLimits = options.onRateLimits;
+    this.codexHome = options.codexHome;
     this.defaultReasoningEffort = options.defaultReasoningEffort;
     // PATH의 codex → 번들 바이너리 순으로 자동 결정한다. 사용자가 경로를 직접 쓸 필요가 없다.
     this.codexPath = resolveCodexExecutable(options.codexPathOverride);
@@ -286,7 +297,12 @@ export class OpenAiSubscriptionRunner implements AiRunner {
       if (!options.enableWebSearch) {
         let session: Awaited<ReturnType<typeof createExperimentalCodexAppServerSession>> | undefined;
         try {
-          session = await createExperimentalCodexAppServerSession({ model, codexPathOverride: this.codexPath });
+          session = await createExperimentalCodexAppServerSession({
+            model,
+            codexPathOverride: this.codexPath,
+            codexHome: this.codexHome,
+            onRateLimits: this.onRateLimits,
+          });
         } catch (err) {
           this.reportStreamFallback('start', err);
         }
@@ -414,7 +430,12 @@ export class OpenAiSubscriptionRunner implements AiRunner {
 
     const createFast = async () => {
       await this.ensureReady();
-      return await createExperimentalCodexAppServerSession({ model, codexPathOverride: this.codexPath });
+      return await createExperimentalCodexAppServerSession({
+        model,
+        codexPathOverride: this.codexPath,
+        codexHome: this.codexHome,
+        onRateLimits: this.onRateLimits,
+      });
     };
 
     return new CodexHybridSession(createFast, createStable, useFastPath, this.onFallback);

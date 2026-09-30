@@ -1,4 +1,5 @@
 import { buildProfileEnv, type ProfileOptions } from '../setup/profile-env.js';
+import { toPlanUsage, type CodexPlanUsage } from './codex-plan-usage.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { AiSession } from '../interfaces/ai-session.interface.js';
@@ -42,6 +43,20 @@ export interface CodexAppServerSessionOptions extends ProfileOptions {
   requestTimeoutMs?: number;
   /** 턴 하나가 이 시간(ms) 안에 안 끝나면 실패 처리한다. 기본값 120000(2분). */
   turnTimeoutMs?: number;
+  /**
+   * 구독 한도가 갱신될 때마다 호출된다. **폴링이 아니다** — 서버가 턴 도중에 밀어 준다
+   * (실측: 턴 하나에 3회). 긴 배치에서 한도가 차오르는 걸 `getCodexPlanUsage()`를 반복
+   * 호출하지 않고 알 수 있다.
+   *
+   * ```ts
+   * onRateLimits: (usage) => {
+   *   if ((usage.primary?.remainingPercent ?? 100) < 5) 배치를_멈춘다();
+   * }
+   * ```
+   *
+   * 콜백에서 던진 예외는 삼킨다 — 알림 때문에 진행 중인 턴이 깨지면 안 된다.
+   */
+  onRateLimits?: (usage: CodexPlanUsage) => void;
 }
 
 /**
@@ -406,5 +421,21 @@ export async function createExperimentalCodexAppServerSession(
     buildProfileEnv(options, ['codexHome']),
   );
   await peer.initialize();
+
+  // 한도 갱신은 턴과 무관하게 서버가 밀어 준다. 세션이 살아 있는 동안 계속 받는다.
+  if (options.onRateLimits) {
+    const notify = options.onRateLimits;
+    peer.onNotification((n) => {
+      if (n.method !== 'account/rateLimits/updated') return;
+      const params = n.params as { rateLimits?: Parameters<typeof toPlanUsage>[0] | null };
+      if (!params?.rateLimits) return;
+      try {
+        notify(toPlanUsage(params.rateLimits));
+      } catch {
+        // 콜백이 던져도 진행 중인 턴을 깨지 않는다.
+      }
+    });
+  }
+
   return new CodexAppServerSession(peer, options.model, options.turnTimeoutMs ?? 120_000);
 }

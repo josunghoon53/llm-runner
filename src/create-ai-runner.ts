@@ -119,6 +119,11 @@ export interface CreateAiRunnerOptions extends ProfileOptions {
    */
   codexAuthStore?: CodexAuthStore;
   /**
+   * Codex 구독 한도가 갱신될 때마다 호출된다(`openai-subscription` 전용). 폴링이 아니라
+   * 서버가 턴 도중에 밀어 주는 값이다. 긴 배치에서 한도를 지켜볼 때 쓴다.
+   */
+  onRateLimits?: (usage: import('./experimental/codex-plan-usage.js').CodexPlanUsage) => void;
+  /**
    * 내부적으로 빠른 경로에서 안정 경로로 내려앉을 때 호출된다(현재 `openai-subscription`만 해당).
    * **서버리스에 배포한다면 꼭 연결해라** — 기본값은 stderr 경고인데 거기선 아무 데도 안 남아서,
    * 몇 달간 느린 경로로만 돌아도 알 방법이 없다.
@@ -192,6 +197,7 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
         codexPathOverride: options.codexPathOverride,
         codexAuthStore: options.codexAuthStore,
         onFallback: options.onFallback,
+        onRateLimits: options.onRateLimits,
         codexHome: options.codexHome,
       });
     case 'claude-subscription':
