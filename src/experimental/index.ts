@@ -34,3 +34,9 @@ export {
   type ClaudeLoginOptions,
   type ClaudeLoginHandle,
 } from './claude-login.js';
+export {
+  generateCodexImage,
+  type CodexImageOptions,
+  type CodexImage,
+  type CodexImageResult,
+} from './codex-image.js';

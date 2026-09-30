@@ -582,6 +582,30 @@ CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
 
 > **왜 라이브러리가 감싸는가** — 두 SDK 모두 `env`를 주면 `process.env`를 병합이 아니라 **통째로 교체**합니다(Codex: *"will not inherit variables from process.env"*, Claude: *"REPLACES the subprocess environment entirely"*). 직접 `env: { CODEX_HOME: x }`만 넘기면 `PATH`·`HOME`까지 날아가 "바이너리를 못 찾는다"는 엉뚱한 오류가 납니다. llm-runner가 병합해서 넘깁니다.
 
+### 이미지 생성 — `generateCodexImage()`
+
+```ts
+import { generateCodexImage } from 'llm-runner/experimental';
+import { writeFile } from 'node:fs/promises';
+
+const { images, failure, text } = await generateCodexImage({
+  prompt: '흰 배경 가운데에 단색 빨간 삼각형 하나',
+});
+
+if (failure) console.log('한도 초과 · 리셋:', failure.resetsAt);
+else await writeFile('triangle.png', images[0].data);
+```
+
+`data`는 PNG 바이트(`Buffer`)입니다. 파일로 저장하든 base64로 실어 보내든 호출부가 정합니다. `revisedPrompt`로 모델이 프롬프트를 어떻게 다듬었는지 볼 수 있고, `savedPath`는 Codex가 저장해 둔 원본 경로입니다.
+
+실측(2026-09-30): 한 번 호출에 **67초, 2장**(모델이 변형을 여럿 낼 수 있습니다), 장당 590~664KB.
+
+**읽기 전용 샌드박스를 그대로 씁니다.** 이미지 생성은 파일을 쓰는 일처럼 보이지만, Codex가 자기 디렉터리(`~/.codex/generated_images/`)에 저장하고 **base64를 응답에 실어 줍니다**. 그래서 이 패키지의 안전선(`sandboxMode: 'read-only'`, 도구 전면 차단)을 내릴 필요가 없습니다.
+
+⚠️ **텍스트와 다른 사용량 한도를 씁니다.** 실측으로 이미지 두 장에 5시간 창이 0% → 4% 올랐습니다. 한도를 넘기면 `failure: { type: 'usageLimitExceeded', limitId, resetsAt }`가 오고 `images`는 빕니다 — 던지지 않으니 `failure`를 먼저 확인하세요.
+
+Claude에는 대응 기능이 없어 `AiRunner` 인터페이스에는 올리지 않았습니다.
+
 ### 프로필에 로그인하기 — `startCodexLogin()` / `startClaudeLogin()`
 
 두 provider의 흐름이 다릅니다. **브라우저는 호출부가 엽니다** — 서버·CI처럼 브라우저가 없는 환경도 있어서, 이 함수들은 URL만 넘깁니다.
