@@ -11,6 +11,7 @@
  * **비용** — 토큰을 쓰지 않는다. 턴을 시작하지 않고 계정 조회 요청만 보낸다.
  */
 import { CodexAppServerPeer } from './codex-app-server-session.js';
+import { buildProfileEnv } from '../setup/profile-env.js';
 
 export interface CodexPlanWindow {
   /** 창을 얼마나 썼는지, 0~100. */
@@ -64,9 +65,14 @@ function toWindow(raw: RawWindow): CodexPlanWindow | undefined {
  * ```
  */
 export async function getCodexPlanUsage(
-  options: { codexPathOverride?: string; timeoutMs?: number } = {},
+  options: { codexPathOverride?: string; timeoutMs?: number; codexHome?: string } = {},
 ): Promise<CodexPlanUsage> {
-  const peer = new CodexAppServerPeer(options.codexPathOverride, undefined, options.timeoutMs ?? 20_000);
+  const peer = new CodexAppServerPeer(
+    options.codexPathOverride,
+    undefined,
+    options.timeoutMs ?? 20_000,
+    buildProfileEnv(options, ['codexHome']),
+  );
   try {
     await peer.initialize();
     const raw = await peer.request<{

@@ -1,3 +1,4 @@
+import type { ProfileOptions } from './setup/profile-env.js';
 import { assertCommandOnPath } from './ai-cli-check.js';
 import { checkClaudeStatus, checkCodexStatus } from './setup/check-status.js';
 import type { AiFallbackEvent, AiRunner } from './interfaces/ai-runner.interface.js';
@@ -89,7 +90,7 @@ function resolveExplicitProvider(optionProvider: AiProvider | undefined): AiProv
   return fromEnv;
 }
 
-export interface CreateAiRunnerOptions {
+export interface CreateAiRunnerOptions extends ProfileOptions {
   /**
    * 기본값: process.env.AI_PROVIDER. 그마저 없으면 로그인/API 키가 이미 설정된 것을 자동으로 찾아 쓴다
    * (claude-subscription → openai-subscription → claude-api → openai-api 순으로 확인).
@@ -191,10 +192,12 @@ export function createAiRunner(options: CreateAiRunnerOptions = {}): AiRunner {
         codexPathOverride: options.codexPathOverride,
         codexAuthStore: options.codexAuthStore,
         onFallback: options.onFallback,
+        codexHome: options.codexHome,
       });
     case 'claude-subscription':
       return new ClaudeSubscriptionRunner({
         defaultModel: options.claudeSubscriptionDefaultModel,
+        claudeConfigDir: options.claudeConfigDir,
       });
   }
 }

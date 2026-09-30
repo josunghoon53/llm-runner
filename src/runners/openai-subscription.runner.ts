@@ -17,6 +17,7 @@ import {
   type CodexAuthStore,
 } from '../setup/restore-session.js';
 import { resolveCodexExecutable } from '../setup/resolve-codex-binary.js';
+import { buildProfileEnv, toStringEnv, type ProfileOptions } from '../setup/profile-env.js';
 import {
   parseJsonFromModelOutput,
   type AiStructuredOptions,
@@ -49,7 +50,7 @@ import {
  */
 export type CodexReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
-export interface OpenAiSubscriptionRunnerOptions {
+export interface OpenAiSubscriptionRunnerOptions extends ProfileOptions {
   defaultModel?: string;
   /** 기본 추론 강도. 호출마다 바꾸려면 `run({ reasoningEffort })`를 쓴다. */
   defaultReasoningEffort?: CodexReasoningEffort;
@@ -169,7 +170,13 @@ export class OpenAiSubscriptionRunner implements AiRunner {
       }
     }
 
-    this.codex = new Codex(this.codexPath ? { codexPathOverride: this.codexPath } : {});
+    // 프로필을 지정했으면 그 디렉터리의 자격 증명을 쓰게 한다. env는 병합해서 넘긴다 —
+    // Codex SDK는 env를 주면 process.env를 상속하지 않으므로 통째로 만들어 줘야 한다.
+    const profileEnv = toStringEnv(buildProfileEnv(options, ['codexHome']));
+    this.codex = new Codex({
+      ...(this.codexPath ? { codexPathOverride: this.codexPath } : {}),
+      ...(profileEnv ? { env: profileEnv } : {}),
+    });
     this.defaultModel =
       options.defaultModel ?? process.env.OPENAI_SUBSCRIPTION_DEFAULT_MODEL ?? CODEX_MODELS.LUNA;
   }

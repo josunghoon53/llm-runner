@@ -1,3 +1,4 @@
+import { buildProfileEnv, type ProfileOptions } from '../setup/profile-env.js';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { AiSession } from '../interfaces/ai-session.interface.js';
@@ -33,7 +34,7 @@ interface JsonRpcResponse {
   error?: { code: number; message: string };
 }
 
-export interface CodexAppServerSessionOptions {
+export interface CodexAppServerSessionOptions extends ProfileOptions {
   model?: string;
   codexPathOverride?: string;
   cwd?: string;
@@ -60,11 +61,18 @@ export class CodexAppServerPeer {
   private closed = false;
   private readonly requestTimeoutMs: number;
 
-  constructor(codexPathOverride: string | undefined, cwd: string | undefined, requestTimeoutMs = 30_000) {
+  constructor(
+    codexPathOverride: string | undefined,
+    cwd: string | undefined,
+    requestTimeoutMs = 30_000,
+    /** 프로필을 지정했을 때만 채워진다. 지정 안 하면 부모 환경을 그대로 상속한다. */
+    env?: NodeJS.ProcessEnv,
+  ) {
     this.requestTimeoutMs = requestTimeoutMs;
     this.child = spawn(codexPathOverride ?? 'codex', ['app-server', '--listen', 'stdio://'], {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
+      ...(env ? { env } : {}),
     });
     this.child.stderr.setEncoding('utf8');
 
@@ -391,7 +399,12 @@ export async function createExperimentalCodexAppServerSession(
   // 세션을 복원한다. OpenAiSubscriptionRunner와 동일한 메커니즘 — 여기서도 빠뜨리면 안 된다
   // (실제로 한 번 빠뜨렸다가 Vercel에서 "턴 실패"로만 나오고 원인이 안 보이는 걸 겪었다).
   restoreCodexSessionFromEnv(options.codexPathOverride);
-  const peer = new CodexAppServerPeer(options.codexPathOverride, options.cwd, options.requestTimeoutMs);
+  const peer = new CodexAppServerPeer(
+    options.codexPathOverride,
+    options.cwd,
+    options.requestTimeoutMs,
+    buildProfileEnv(options, ['codexHome']),
+  );
   await peer.initialize();
   return new CodexAppServerSession(peer, options.model, options.turnTimeoutMs ?? 120_000);
 }

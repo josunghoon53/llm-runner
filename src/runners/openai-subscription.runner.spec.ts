@@ -63,6 +63,21 @@ describe('OpenAiSubscriptionRunner', () => {
     expect(codexConstructorMock).toHaveBeenCalledWith({});
   });
 
+  // 두 SDK 모두 env를 주면 process.env를 상속하지 않는다. 병합을 빠뜨리면 PATH가 날아간다.
+  it('codexHome을 주면 병합된 env를 Codex 생성자에 넘긴다', () => {
+    new OpenAiSubscriptionRunner({ codexHome: '/tmp/work-profile' });
+
+    const passed = codexConstructorMock.mock.calls[0][0] as { env?: Record<string, string> };
+    expect(passed.env?.CODEX_HOME).toBe('/tmp/work-profile');
+    expect(passed.env?.PATH).toBe(process.env.PATH);
+  });
+
+  it('codexHome을 안 주면 env 자체를 넘기지 않는다', () => {
+    new OpenAiSubscriptionRunner();
+
+    expect(codexConstructorMock.mock.calls[0][0]).not.toHaveProperty('env');
+  });
+
   it('finalResponse를 text로 반환한다', async () => {
     runMock.mockResolvedValue({ finalResponse: '답변', items: [] });
 

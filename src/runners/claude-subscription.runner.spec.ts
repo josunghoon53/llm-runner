@@ -271,6 +271,28 @@ describe('ClaudeSubscriptionRunner.runStructured', () => {
     };
   }
 
+  it('claudeConfigDir을 주면 병합된 env를 query 옵션에 넘긴다', async () => {
+    queryMock.mockReturnValue(resultStream('{"a":1}'));
+
+    await new ClaudeSubscriptionRunner({ claudeConfigDir: '/tmp/work-profile' }).runStructured({
+      prompt: '질문',
+      schema,
+    });
+
+    const passed = queryMock.mock.calls[0][0] as { options: { env?: NodeJS.ProcessEnv } };
+    expect(passed.options.env?.CLAUDE_CONFIG_DIR).toBe('/tmp/work-profile');
+    // env를 주면 SDK가 process.env를 상속하지 않으므로, 병합돼 있어야 한다.
+    expect(passed.options.env?.PATH).toBe(process.env.PATH);
+  });
+
+  it('claudeConfigDir을 안 주면 env 자체를 넘기지 않는다', async () => {
+    queryMock.mockReturnValue(resultStream('{"a":1}'));
+
+    await new ClaudeSubscriptionRunner().runStructured({ prompt: '질문', schema });
+
+    expect(queryMock.mock.calls[0][0].options).not.toHaveProperty('env');
+  });
+
   it('SDK의 outputFormat으로 스키마를 강제한다 (프롬프트로 부탁하지 않는다)', async () => {
     queryMock.mockReturnValue(resultStream('{"a":1}'));
 

@@ -12,6 +12,7 @@
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { CodexAppServerPeer } from './codex-app-server-session.js';
+import { buildProfileEnv } from '../setup/profile-env.js';
 
 export interface LlmAccountInfo {
   /** 계정을 읽을 수 있었는가. 로그인이 안 됐거나 조회에 실패하면 false. */
@@ -31,7 +32,9 @@ export interface LlmAccountInfo {
 }
 
 /** Claude 구독 계정. 프롬프트를 보내지 않으므로 토큰을 쓰지 않는다. */
-export async function getClaudeAccountInfo(options: { timeoutMs?: number } = {}): Promise<LlmAccountInfo> {
+export async function getClaudeAccountInfo(
+  options: { timeoutMs?: number; claudeConfigDir?: string } = {},
+): Promise<LlmAccountInfo> {
   // 입력을 닫지 않고 붙잡아 둬야 제어 요청이 간다. 일회성 호출은 결과를 내는 순간
   // CLI가 끝나서 채널이 닫히고 "Query closed"가 난다(plan-usage에서 겪은 것과 같다).
   let release!: () => void;
@@ -42,7 +45,11 @@ export async function getClaudeAccountInfo(options: { timeoutMs?: number } = {})
     await held;
   }
 
-  const stream = query({ prompt: holdOpen(), options: { allowedTools: [], disallowedTools: [] } });
+  const profileEnv = buildProfileEnv(options, ['claudeConfigDir']);
+  const stream = query({
+    prompt: holdOpen(),
+    options: { allowedTools: [], disallowedTools: [], ...(profileEnv ? { env: profileEnv } : {}) },
+  });
   try {
     const call = (stream as unknown as Record<string, unknown>).accountInfo;
     if (typeof call !== 'function') return { available: false };
@@ -72,9 +79,14 @@ export async function getClaudeAccountInfo(options: { timeoutMs?: number } = {})
 
 /** Codex 구독 계정. app-server의 `account/read`를 쓴다. */
 export async function getCodexAccountInfo(
-  options: { codexPathOverride?: string; timeoutMs?: number } = {},
+  options: { codexPathOverride?: string; timeoutMs?: number; codexHome?: string } = {},
 ): Promise<LlmAccountInfo> {
-  const peer = new CodexAppServerPeer(options.codexPathOverride, undefined, options.timeoutMs ?? 20_000);
+  const peer = new CodexAppServerPeer(
+    options.codexPathOverride,
+    undefined,
+    options.timeoutMs ?? 20_000,
+    buildProfileEnv(options, ['codexHome']),
+  );
   try {
     await peer.initialize();
     const raw = await peer.request<{

@@ -19,6 +19,7 @@
  * (실측: 세션 비용 $0, 약 2초).
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
+import { buildProfileEnv } from '../setup/profile-env.js';
 
 /** SDK가 안정화되면서 바뀔 이름. 한 곳에서만 쓰도록 모아 둔다. */
 const USAGE_METHOD = 'usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET';
@@ -77,7 +78,9 @@ function toWindow(raw: RawWindow): ClaudePlanWindow | undefined {
  * }
  * ```
  */
-export async function getClaudePlanUsage(options: { timeoutMs?: number } = {}): Promise<ClaudePlanUsage> {
+export async function getClaudePlanUsage(
+  options: { timeoutMs?: number; claudeConfigDir?: string } = {},
+): Promise<ClaudePlanUsage> {
   const empty: ClaudePlanUsage = { available: false, others: {} };
 
   // 입력을 닫지 않고 붙잡아 둬야 제어 요청이 간다. 일회성 호출은 결과를 내는 순간
@@ -90,9 +93,10 @@ export async function getClaudePlanUsage(options: { timeoutMs?: number } = {}): 
     await held;
   }
 
+  const profileEnv = buildProfileEnv(options, ['claudeConfigDir']);
   const stream = query({
     prompt: holdOpen(),
-    options: { allowedTools: [], disallowedTools: [] },
+    options: { allowedTools: [], disallowedTools: [], ...(profileEnv ? { env: profileEnv } : {}) },
   });
 
   try {

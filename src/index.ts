@@ -56,3 +56,4 @@ export { checkCodexAuthFreshness, getRefreshedCodexAuthJson } from './setup/rest
 export type { CodexAuthFreshness } from './setup/restore-session.js';
 /** 배포 후 "바이너리가 실렸는지" 확인하는 헬스체크용. 못 찾으면 undefined. */
 export { tryResolveCodexBinaryPath, resolveCodexBinaryPath } from './setup/resolve-codex-binary.js';
+export type { ProfileOptions } from './setup/profile-env.js';

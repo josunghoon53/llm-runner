@@ -1,3 +1,4 @@
+import { buildProfileEnv, type ProfileOptions } from '../setup/profile-env.js';
 import { query, type ModelUsage, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type {
   AiRunner,
@@ -84,7 +85,7 @@ const ALL_BUILTIN_TOOLS = [
   'SlashCommand',
 ];
 
-export interface ClaudeSubscriptionRunnerOptions {
+export interface ClaudeSubscriptionRunnerOptions extends ProfileOptions {
   defaultModel?: string;
 }
 
@@ -217,10 +218,16 @@ class ClaudeAgentSdkSession implements AiSession {
  */
 export class ClaudeSubscriptionRunner implements AiRunner {
   private readonly defaultModel: string;
+  /**
+   * 프로필을 지정했을 때만 채워진다. Claude SDK는 env를 주면 process.env를 상속하지 않으므로
+   * 병합된 전체 환경을 넘긴다. 지정하지 않았으면 undefined로 둬서 SDK 기본 동작을 쓴다.
+   */
+  private readonly profileEnv: NodeJS.ProcessEnv | undefined;
 
   constructor(options: ClaudeSubscriptionRunnerOptions = {}) {
     this.defaultModel =
       options.defaultModel ?? process.env.CLAUDE_SUBSCRIPTION_DEFAULT_MODEL ?? CLAUDE_SUBSCRIPTION_MODELS.SONNET;
+    this.profileEnv = buildProfileEnv(options, ['claudeConfigDir']);
   }
 
   private queryOptions(options: AiRunOptions, includePartialMessages: boolean) {
@@ -233,6 +240,7 @@ export class ClaudeSubscriptionRunner implements AiRunner {
       allowedTools,
       disallowedTools,
       includePartialMessages,
+      ...(this.profileEnv ? { env: this.profileEnv } : {}),
       // permissionMode를 지정하지 않으면 canUseTool 콜백이 없는 headless 호출에서
       // 'ask' 판정이 자동 거부로 처리된다 (bypassPermissions보다 안전).
     };

@@ -549,6 +549,39 @@ if (usage.available) {
 | 플랜 잔량 | ✅ `getClaudePlanUsage()` | ✅ `getCodexPlanUsage()` |
 | 크레딧 잔액 | — | ✅ |
 
+### 계정을 여러 개 굴리기 — `codexHome` / `claudeConfigDir`
+
+두 CLI 모두 자격 증명을 한 디렉터리에 모아 둡니다. 다른 디렉터리를 가리키면 **완전히 다른 계정**이 됩니다. 기존 로그인은 건드리지 않습니다.
+
+```ts
+const work     = createAiRunner({ provider: 'openai-subscription', codexHome: '~/.codex-work' });
+const personal = createAiRunner({ provider: 'openai-subscription', codexHome: '~/.codex-personal' });
+
+const claudeWork = createAiRunner({ provider: 'claude-subscription', claudeConfigDir: '~/.claude-work' });
+```
+
+러너마다 따로 넘기므로 **한 프로세스 안에서 두 계정을 동시에** 쓸 수 있습니다. 한 계정 한도가 차면 다른 구독으로 배치를 돌리는 식으로 씁니다.
+
+조회 함수들도 같은 옵션을 받습니다.
+
+```ts
+await getCodexAccountInfo({ codexHome: '~/.codex-work' });
+await getCodexPlanUsage({ codexHome: '~/.codex-work' });
+await getClaudeAccountInfo({ claudeConfigDir: '~/.claude-work' });
+await getClaudePlanUsage({ claudeConfigDir: '~/.claude-work' });
+```
+
+**각 프로필에 로그인하는 건 사용자가 한 번씩 직접 해야 합니다.** 브라우저 인증이라 코드로 대신할 수 없습니다.
+
+```bash
+CODEX_HOME=~/.codex-work codex login
+CLAUDE_CONFIG_DIR=~/.claude-work claude auth login
+```
+
+실측(2026-09-30): 빈 디렉터리를 가리키면 Codex는 `401 Unauthorized`, Claude는 `Not logged in`이 나고, 같은 프로세스의 기본 프로필은 그대로 동작했습니다.
+
+> **왜 라이브러리가 감싸는가** — 두 SDK 모두 `env`를 주면 `process.env`를 병합이 아니라 **통째로 교체**합니다(Codex: *"will not inherit variables from process.env"*, Claude: *"REPLACES the subprocess environment entirely"*). 직접 `env: { CODEX_HOME: x }`만 넘기면 `PATH`·`HOME`까지 날아가 "바이너리를 못 찾는다"는 엉뚱한 오류가 납니다. llm-runner가 병합해서 넘깁니다.
+
 ### 어느 계정으로 돌고 있는지 — `getClaudeAccountInfo()` / `getCodexAccountInfo()`
 
 두 provider가 **서로 다른 계정**으로 로그인돼 있을 수 있습니다. 의도한 구독을 쓰고 있는지 확인할 때 씁니다.
