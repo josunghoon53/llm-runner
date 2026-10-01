@@ -50,8 +50,8 @@ npx llm-runner-setup --init   # provider 골라서 .env에 저장
 ```
 
 서버리스 환경은 콜드스타트마다 로그인 세션이 사라지므로 구독 provider가 기본적으로 동작하지 않는다 — 그런 환경이면 무조건 API 키를 쓰는 게 기본 권장이다. (예외: `claude-subscription`은 `CLAUDE_CODE_OAUTH_TOKEN`으로, `openai-subscription`은 `CODEX_AUTH_JSON`으로 세션을 복원하면 서버리스에서도 동작한다 — 둘 다 실제 Vercel 배포로 검증됨. Codex 쪽은 바이너리 번들링이 추가로 필요한데, `next.config.ts`를 `llm-runner/next`의 `withLlmRunner()`로 감싸고 `npm install @openai/codex`만 해두면 경로 지정 없이 동작한다.
-배포 전에 `npx llm-runner-setup --check-deploy`로 설정 실수(의존성 누락, routes 불일치)를 먼저 거르고, 배포 후에는 **반드시 실제 호출로 한 번 검증해라** — 네이티브 바이너리는 OS별 패키지라서 로컬 빌드 성공이 리눅스 배포 성공을 전혀 보장하지 않는다(README의 "배포 전에 반드시 확인할 것" 참고).
-그리고 **서버리스에서 Codex 구독을 쓴다면 `codexAuthStore`를 반드시 함께 제안하되, 동시 인스턴스가 있는 서비스면 잠금이 되는 저장소가 필요하다는 것도 같이 알려라** — 안 쓰면 환경변수에 넣어둔 로그인 스냅샷이 토큰 회전 이후 언젠가 조용히 만료된다. 자세한 절차는 README의 "서버리스/배포 환경에서 쓰기" 참고.)
+배포 전에 `npx llm-runner-setup --check-deploy`로 설정 실수(의존성 누락, routes 불일치)를 먼저 거르고, 배포 후에는 **반드시 실제 호출로 한 번 검증해라** — 네이티브 바이너리는 OS별 패키지라서 로컬 빌드 성공이 리눅스 배포 성공을 전혀 보장하지 않는다(README의 "배포 전에 반드시 확인할 것" 참고, 전체 절차는 `docs/deploy-serverless.md`).
+그리고 **서버리스에서 Codex 구독을 쓴다면 `codexAuthStore`를 반드시 함께 제안하되, 동시 인스턴스가 있는 서비스면 잠금이 되는 저장소가 필요하다는 것도 같이 알려라** — 안 쓰면 환경변수에 넣어둔 로그인 스냅샷이 토큰 회전 이후 언젠가 조용히 만료된다. 자세한 절차는 `docs/deploy-serverless.md`(README의 "서버리스/배포 환경에서 쓰기"에 요약) 참고.)
 
 ## 절대 규칙 4: 파이프라인에서 `claude-subscription`을 여러 번 부를 때
 
@@ -155,7 +155,7 @@ import { CLAUDE_API_MODELS, OPENAI_API_MODELS, CLAUDE_SUBSCRIPTION_MODELS, CODEX
 
 ## 더 깊은 배경이 필요하면
 
-- 전체 설계 이유: `README.md`
+- 전체 설계 이유: `README.md`(요약)와 `docs/`(상세)
 - 구독 vs API 판단 기준을 쉽게 설명한 글: `docs/subscription-vs-api-guide.md`
 - 비용이 얼마나 나올지 계산하는 법: `docs/cost-guide.md`
 - 상담봇 안전장치(프롬프트 인젝션 방어, 법적 책임 문구): `docs/safety-guide.md`
